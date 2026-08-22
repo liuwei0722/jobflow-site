@@ -847,8 +847,18 @@ function cloudRedirectUrl() {
 
 function cloudAuthErrorMessage(error, fallback) {
   const message = String(error?.message || "");
+  const code = String(error?.code || "");
   const cooldownMatch = message.match(/after\s+(\d+)\s+seconds?/i);
   if (cooldownMatch) return `请求过于频繁，请 ${cooldownMatch[1]} 秒后再试`;
+  if (
+    code === "over_email_send_rate_limit" ||
+    /email rate limit exceeded/i.test(message)
+  ) {
+    return "邮件发送额度已用完，请稍后再试";
+  }
+  if (/rate limit exceeded|too many requests/i.test(message)) {
+    return "请求过于频繁，请稍后再试";
+  }
   if (/token.*expired|expired.*token|invalid.*token|token.*invalid/i.test(message)) {
     return "验证码无效或已过期，请重新发送";
   }
@@ -1642,7 +1652,10 @@ function renderAccount() {
       "完成 supabase-config.js 和数据库初始化后，即可使用邮箱登录。";
   }
 
-  syncStatus.textContent = statusLabels[cloudStatus] || "本地模式";
+  syncStatus.textContent =
+    !email && cloudStatus === "error"
+      ? "登录异常"
+      : statusLabels[cloudStatus] || "本地模式";
   syncStatus.className = `sync-status is-${cloudStatus}`;
   updateCloudOtpResendButton();
   refreshIcons();

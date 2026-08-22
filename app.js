@@ -278,6 +278,8 @@ let quickOcrBusy = false;
 let assetDbPromise = null;
 let calendarWeekOffset = 0;
 let notificationTimer = null;
+let notificationWorkerPromise = null;
+let notificationCheckInFlight = false;
 let supabaseClient = null;
 let cloudUser = null;
 let cloudSyncReady = false;
@@ -1898,27 +1900,72 @@ function renderInterviewCalendar() {
   refreshIcons();
 }
 
+function getNotificationEnvironment() {
+  if (!window.isSecureContext) {
+    return {
+      available: false,
+      message: "系统通知需要通过 HTTPS 或本地开发地址打开",
+    };
+  }
+  if (
+    !("Notification" in window) ||
+    typeof window.Notification.requestPermission !== "function"
+  ) {
+    return {
+      available: false,
+      message: "当前打开方式不支持系统通知，请使用支持通知的系统浏览器",
+    };
+  }
+  if (window.Notification.permission === "denied") {
+    return {
+      available: false,
+      message: "通知权限已被阻止，请在浏览器的网站设置中改为允许后刷新",
+    };
+  }
+  return { available: true, message: "" };
+}
+
+async function getNotificationWorkerRegistration() {
+  if (!window.isSecureContext || !("serviceWorker" in navigator)) return null;
+  if (!notificationWorkerPromise) {
+    notificationWorkerPromise = navigator.serviceWorker
+      .register("./service-worker.js?v=1", {
+        scope: "./",
+        updateViaCache: "none",
+      })
+      .then(() => navigator.serviceWorker.ready)
+      .catch((error) => {
+        console.warn("Notification service worker could not be registered.", error);
+        return null;
+      });
+  }
+  return notificationWorkerPromise;
+}
+
 function renderNotificationToggle() {
   const button = document.getElementById("notificationToggle");
   if (!button) return;
-  const supported = "Notification" in window;
+  const environment = getNotificationEnvironment();
   const enabled =
-    supported &&
+    environment.available &&
     state.settings.interviewNotifications &&
     window.Notification.permission === "granted";
-  button.disabled = !supported;
+  button.disabled = false;
   button.classList.toggle("is-active", enabled);
+  button.classList.toggle("is-unavailable", !environment.available);
   button.setAttribute("aria-checked", String(enabled));
-  button.title = supported
+  button.setAttribute("aria-disabled", String(!environment.available));
+  button.title = environment.available
     ? enabled
       ? "关闭面试前 1 小时提醒"
       : "开启面试前 1 小时提醒"
-    : "当前浏览器不支持系统通知";
+    : environment.message;
 }
 
 async function toggleInterviewNotifications() {
-  if (!("Notification" in window)) {
-    showToast("当前浏览器不支持系统通知");
+  const environment = getNotificationEnvironment();
+  if (!environment.available) {
+    showToast(environment.message);
     return;
   }
   if (
@@ -1936,54 +1983,92 @@ async function toggleInterviewNotifications() {
     permission = await window.Notification.requestPermission();
   }
   if (permission !== "granted") {
-    state.settings.interviewNotifications = false;
-    saveState();
     renderNotificationToggle();
-    showToast("需要在浏览器设置中允许通知");
+    showToast("未获得通知权限，提醒尚未开启");
     return;
   }
   state.settings.interviewNotifications = true;
   saveState();
   renderNotificationToggle();
-  checkInterviewNotifications();
-  showToast("已开启面试前 1 小时提醒");
+  await checkInterviewNotifications();
+  showToast("已开启；页面保持打开时会在面试前 1 小时提醒");
 }
 
-function checkInterviewNotifications() {
-  if (
-    !("Notification" in window) ||
-    window.Notification.permission !== "granted" ||
-    !state.settings.interviewNotifications
-  ) {
+async function showInterviewNotification(event, key) {
+  const title = `${event.application.company} · ${getStatus(event.progress.stage).label}`;
+  const options = {
+    body: `面试将于 ${formatClock(event.start)} 开始 · ${event.application.role}`,
+    tag: key,
+    data: {
+      type: "open-progress",
+      applicationId: event.application.id,
+      progressId: event.progress.id,
+    },
+  };
+  const registration = await getNotificationWorkerRegistration();
+  if (registration && typeof registration.showNotification === "function") {
+    await registration.showNotification(title, options);
     return;
   }
+  const notification = new window.Notification(title, options);
+  notification.onclick = () => {
+    window.focus();
+    editingApplicationId = event.application.id;
+    openProgressDialog(event.progress.id);
+    notification.close();
+  };
+}
+
+async function checkInterviewNotifications() {
+  if (
+    !getNotificationEnvironment().available ||
+    window.Notification.permission !== "granted" ||
+    !state.settings.interviewNotifications ||
+    notificationCheckInFlight
+  ) {
+    return false;
+  }
+  notificationCheckInFlight = true;
   const history = new Set(state.settings.notificationHistory || []);
   let didNotify = false;
-  getInterviewScheduleEvents().forEach((event) => {
-    const millisecondsUntilStart = event.start.getTime() - Date.now();
-    if (millisecondsUntilStart <= 0 || millisecondsUntilStart > 3600000) return;
-    const key = `${event.application.id}:${event.progress.id}:${event.progress.scheduledAt}`;
-    if (history.has(key)) return;
-    const notification = new window.Notification(
-      `${event.application.company} · ${getStatus(event.progress.stage).label}`,
-      {
-        body: `面试将于 ${formatClock(event.start)} 开始 · ${event.application.role}`,
-        tag: key,
-      },
-    );
-    notification.onclick = () => {
-      window.focus();
-      editingApplicationId = event.application.id;
-      openProgressDialog(event.progress.id);
-      notification.close();
-    };
-    history.add(key);
-    didNotify = true;
-  });
-  if (didNotify) {
-    state.settings.notificationHistory = [...history].slice(-100);
-    saveState();
+  try {
+    for (const event of getInterviewScheduleEvents()) {
+      const millisecondsUntilStart = event.start.getTime() - Date.now();
+      if (millisecondsUntilStart <= 0 || millisecondsUntilStart > 3600000) continue;
+      const key = `${event.application.id}:${event.progress.id}:${event.progress.scheduledAt}`;
+      if (history.has(key)) continue;
+      try {
+        await showInterviewNotification(event, key);
+        history.add(key);
+        didNotify = true;
+      } catch (error) {
+        console.warn("Interview notification could not be shown.", error);
+      }
+    }
+    if (didNotify) {
+      state.settings.notificationHistory = [...history].slice(-100);
+      saveState();
+    }
+    return didNotify;
+  } finally {
+    notificationCheckInFlight = false;
   }
+}
+
+function bindNotificationWorkerMessages() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const message = event.data;
+    if (!message || message.type !== "open-progress") return;
+    const application = state.applications.find(
+      (item) => item.id === message.applicationId,
+    );
+    const progress = application?.progress.find((item) => item.id === message.progressId);
+    if (!application || !progress) return;
+    switchView("dashboard");
+    editingApplicationId = application.id;
+    openProgressDialog(progress.id);
+  });
 }
 
 function renderDashboard() {
@@ -3975,11 +4060,11 @@ async function init() {
   applyTheme();
   initializeSelects();
   bindEvents();
+  bindNotificationWorkerMessages();
+  getNotificationWorkerRegistration();
   renderAll();
   const requestedView = window.location.hash.slice(1);
   if (VIEW_META[requestedView]) switchView(requestedView);
-  checkInterviewNotifications();
-  notificationTimer = window.setInterval(checkInterviewNotifications, 60000);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (!localStorage.getItem(THEME_STORAGE_KEY)) applyTheme();
   });
@@ -3988,6 +4073,8 @@ async function init() {
   });
   refreshIcons();
   await initializeCloudSync();
+  await checkInterviewNotifications();
+  notificationTimer = window.setInterval(checkInterviewNotifications, 60000);
 }
 
 document.addEventListener("DOMContentLoaded", init);

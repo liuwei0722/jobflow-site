@@ -271,6 +271,7 @@ let confirmCallback = null;
 let toastTimer = null;
 let captureDraft = null;
 let editingApplicationId = "";
+let expandedApplicationId = "";
 let pendingJdImages = [];
 let capturePendingJdImages = [];
 let quickCaptureImage = null;
@@ -2302,6 +2303,45 @@ function statusMatchesFilter(application, filter) {
   return application.status === filter;
 }
 
+function renderInlineProgressTimeline(application, expanded) {
+  const progress = getProgress(application).reverse();
+  return `
+    <div
+      class="inline-progress-panel"
+      id="application-progress-${escapeHtml(application.id)}"
+      aria-label="${escapeHtml(application.company)}的进展时间线"
+      ${expanded ? "" : "hidden"}
+    >
+      ${
+        progress.length
+          ? progress
+              .map(
+                (item, index) => `
+                  <div class="inline-progress-item ${index === 0 ? "is-current" : ""}">
+                    <span class="inline-progress-marker" style="--timeline-color:${getStatus(item.stage).color}"></span>
+                    <time>${formatDate(item.eventDate)}</time>
+                    <strong style="--timeline-color:${getStatus(item.stage).color}">${getStatus(item.stage).label}</strong>
+                    <span title="${escapeHtml(item.note || "未填写备注")}">${escapeHtml(item.note || "未填写备注")}</span>
+                    ${
+                      item.scheduledAt
+                        ? `<small>${escapeHtml(formatReminderDate(item.scheduledAt))}</small>`
+                        : ""
+                    }
+                  </div>
+                `,
+              )
+              .join("")
+          : '<div class="inline-progress-empty">还没有进展记录</div>'
+      }
+    </div>
+  `;
+}
+
+function toggleApplicationTimeline(id) {
+  expandedApplicationId = expandedApplicationId === id ? "" : id;
+  renderApplications();
+}
+
 function renderApplications() {
   const search = document.getElementById("applicationSearch").value.trim().toLowerCase();
   const status = document.getElementById("statusFilter").value;
@@ -2354,28 +2394,48 @@ function renderApplications() {
       const progressCount = getProgress(item).length;
       const reminder = remindersByApplication.get(item.id);
       const theme = reminder ? reminderTheme(reminder.type) : null;
+      const expanded = expandedApplicationId === item.id;
       return `
-        <article class="compact-application-record">
-          <div class="compact-application-line primary-line">
-            <strong class="compact-application-title">${escapeHtml(item.company)} · ${escapeHtml(item.role)}</strong>
-            <select class="status-select status-${item.status}" data-status-id="${item.id}" aria-label="更新 ${escapeHtml(item.company)} ${escapeHtml(item.role)} 的进展">
-              ${statusOptions(item.status)}
-            </select>
+        <article
+          class="compact-application-record ${expanded ? "is-expanded" : ""}"
+        >
+          <div
+            class="compact-application-summary"
+            data-application-summary="${item.id}"
+          >
+            <div class="compact-application-line primary-line">
+              <strong class="compact-application-title">${escapeHtml(item.company)} · ${escapeHtml(item.role)}</strong>
+              <select class="status-select status-${item.status}" data-status-id="${item.id}" aria-label="更新 ${escapeHtml(item.company)} ${escapeHtml(item.role)} 的进展">
+                ${statusOptions(item.status)}
+              </select>
+              <button
+                class="application-expand-button"
+                type="button"
+                data-toggle-application="${item.id}"
+                aria-expanded="${expanded}"
+                aria-controls="application-progress-${escapeHtml(item.id)}"
+                aria-label="${expanded ? "收起" : "展开"} ${escapeHtml(item.company)} ${escapeHtml(item.role)} 的进展时间线"
+                title="${expanded ? "收起进展" : "展开进展"}"
+              >
+                <i class="application-expand-icon" data-lucide="chevron-down"></i>
+              </button>
+            </div>
+            <div class="compact-application-line secondary-line">
+              <span class="compact-meta" title="${escapeHtml(item.department || "部门待补充")}"><i data-lucide="building-2"></i>${escapeHtml(item.department || "部门待补充")}</span>
+              <span class="compact-meta"><i data-lucide="route"></i>${escapeHtml(item.channel)}</span>
+              <span class="compact-meta"><i data-lucide="calendar-days"></i>${latest ? formatDate(latest.eventDate) : "—"}</span>
+              <span class="compact-meta ${reminder ? "has-reminder" : ""}" ${theme ? `style="--meta-color:${theme.color}"` : ""}>
+                <i data-lucide="${theme ? theme.icon : "bell-off"}"></i>
+                ${reminder ? `${theme.label} ${reminderDistance(reminder.dueAt)}` : "暂无提醒"}
+              </span>
+              <span class="compact-meta"><i data-lucide="list-tree"></i>${progressCount} 条</span>
+              <span class="compact-meta"><i data-lucide="image"></i>JD ${item.jdCount || 0} 张</span>
+              <button class="row-action" type="button" data-edit-id="${item.id}" aria-label="编辑 ${escapeHtml(item.company)}" title="编辑岗位档案">
+                <i data-lucide="pencil"></i>
+              </button>
+            </div>
           </div>
-          <div class="compact-application-line secondary-line">
-            <span class="compact-meta" title="${escapeHtml(item.department || "部门待补充")}"><i data-lucide="building-2"></i>${escapeHtml(item.department || "部门待补充")}</span>
-            <span class="compact-meta"><i data-lucide="route"></i>${escapeHtml(item.channel)}</span>
-            <span class="compact-meta"><i data-lucide="calendar-days"></i>${latest ? formatDate(latest.eventDate) : "—"}</span>
-            <span class="compact-meta ${reminder ? "has-reminder" : ""}" ${theme ? `style="--meta-color:${theme.color}"` : ""}>
-              <i data-lucide="${theme ? theme.icon : "bell-off"}"></i>
-              ${reminder ? `${theme.label} ${reminderDistance(reminder.dueAt)}` : "暂无提醒"}
-            </span>
-            <span class="compact-meta"><i data-lucide="list-tree"></i>${progressCount} 条</span>
-            <span class="compact-meta"><i data-lucide="image"></i>JD ${item.jdCount || 0} 张</span>
-            <button class="row-action" type="button" data-edit-id="${item.id}" aria-label="编辑 ${escapeHtml(item.company)}" title="编辑岗位档案">
-              <i data-lucide="pencil"></i>
-            </button>
-          </div>
+          ${renderInlineProgressTimeline(item, expanded)}
         </article>
       `;
     })
@@ -3491,6 +3551,7 @@ function deleteCurrentApplication() {
       saveState();
       closeConfirm();
       closeDialog("applicationDialog");
+      if (expandedApplicationId === id) expandedApplicationId = "";
       renderAll();
       showToast("岗位档案已删除");
     },
@@ -3682,6 +3743,19 @@ function bindEvents() {
     const edit = event.target.closest("[data-edit-id]");
     if (edit) {
       openApplication(edit.dataset.editId);
+      return;
+    }
+    const applicationToggle = event.target.closest("[data-toggle-application]");
+    if (applicationToggle) {
+      toggleApplicationTimeline(applicationToggle.dataset.toggleApplication);
+      return;
+    }
+    const applicationSummary = event.target.closest("[data-application-summary]");
+    if (
+      applicationSummary &&
+      !event.target.closest("button, select, input, textarea, a, label")
+    ) {
+      toggleApplicationTimeline(applicationSummary.dataset.applicationSummary);
       return;
     }
     if (event.target.closest("[data-open-application]")) {

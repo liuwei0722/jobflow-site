@@ -3132,12 +3132,20 @@ tbody tr:hover {
   border-bottom: 1px solid var(--line);
 }
 
+.compact-application-summary {
+  cursor: pointer;
+}
+
 .compact-application-record:last-child {
   border-bottom: 0;
 }
 
 .compact-application-record:hover {
   background: var(--hover-bg);
+}
+
+.compact-application-record.is-expanded {
+  background: var(--surface-soft);
 }
 
 .compact-application-line {
@@ -3153,11 +3161,45 @@ tbody tr:hover {
 }
 
 .compact-application-title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.application-expand-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 150ms ease;
+}
+
+.application-expand-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.application-expand-button:hover,
+.application-expand-button:focus-visible {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.compact-application-record.is-expanded .application-expand-button {
+  color: var(--brand);
+}
+
+.compact-application-record.is-expanded .application-expand-icon {
+  transform: rotate(180deg);
 }
 
 .compact-application-record .secondary-line {
@@ -3203,6 +3245,67 @@ tbody tr:hover {
   height: 26px;
   margin-left: auto;
   flex: 0 0 26px;
+}
+
+.inline-progress-panel {
+  position: relative;
+  margin: 6px 0 2px 20px;
+  padding: 2px 0 1px 14px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.inline-progress-item {
+  display: grid;
+  min-height: 30px;
+  grid-template-columns: 7px 50px 43px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  border-top: 1px solid var(--border-light);
+  color: var(--text-soft);
+}
+
+.inline-progress-item:first-child {
+  border-top: 0;
+}
+
+.inline-progress-marker {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--timeline-color);
+}
+
+.inline-progress-item time,
+.inline-progress-item small {
+  color: var(--text-dim);
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.inline-progress-item strong {
+  color: var(--timeline-color);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.inline-progress-item > span:nth-child(4) {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-progress-item.is-current {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.inline-progress-empty {
+  padding: 8px 0;
+  color: var(--text-dim);
+  font-size: 9.5px;
 }
 
 .review-recorded {
@@ -3531,6 +3634,21 @@ tbody tr:hover {
     width: 22px;
     height: 22px;
     flex-basis: 22px;
+  }
+
+  .inline-progress-panel {
+    margin-left: 8px;
+    padding-left: 9px;
+  }
+
+  .inline-progress-item {
+    min-height: 34px;
+    grid-template-columns: 6px 43px 38px minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .inline-progress-item small {
+    display: none;
   }
 
   .table-panel {

@@ -2314,6 +2314,33 @@ tbody tr:hover {
   font-size: 10.5px;
 }
 
+#accountOtpField {
+  margin-top: 12px;
+}
+
+#accountOtpInput {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.account-code-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 7px;
+}
+
+.account-code-actions .text-button {
+  font-size: 10.5px;
+}
+
+.account-code-actions .text-button:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
 .sync-status {
   display: inline-flex;
   align-items: center;
@@ -2335,12 +2362,13 @@ tbody tr:hover {
 .sync-status.is-pending,
 .sync-status.is-syncing,
 .sync-status.is-loading,
-.sync-status.is-sending {
+.sync-status.is-sending,
+.sync-status.is-verifying {
   background: var(--blue-soft);
   color: var(--blue);
 }
 
-.sync-status.is-email-sent {
+.sync-status.is-code-sent {
   background: var(--brand-soft);
   color: var(--brand);
 }

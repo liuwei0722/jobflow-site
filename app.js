@@ -6,6 +6,7 @@ const ASSET_STORE_NAME = "jd_images";
 const CLOUD_STATE_TABLE = "user_states";
 const CLOUD_ASSET_BUCKET = "jd-images";
 const CLOUD_SYNC_DELAY = 500;
+const CLOUD_OTP_RESEND_DELAY = 60;
 
 const STATUS = [
   { value: "wish", label: "想投", color: "#6B7280", icon: "bookmark" },
@@ -286,6 +287,10 @@ let cloudSyncInFlight = false;
 let cloudSessionLoadingId = "";
 let cloudStatus = "local";
 let cloudStatusMessage = "";
+let cloudOtpPending = false;
+let cloudOtpEmail = "";
+let cloudOtpResendAt = 0;
+let cloudOtpResendTimer = null;
 
 function dateOffset(days) {
   const date = new Date();
@@ -818,6 +823,7 @@ async function handleCloudSession(session, eventName = "") {
     }
     return;
   }
+  clearCloudOtpState();
   if (
     cloudUser?.id === user.id &&
     (cloudSyncReady || cloudSessionLoadingId === user.id)
@@ -839,7 +845,48 @@ function cloudRedirectUrl() {
   return url.href;
 }
 
-async function sendCloudLoginLink(email) {
+function cloudAuthErrorMessage(error, fallback) {
+  const message = String(error?.message || "");
+  const cooldownMatch = message.match(/after\s+(\d+)\s+seconds?/i);
+  if (cooldownMatch) return `请求过于频繁，请 ${cooldownMatch[1]} 秒后再试`;
+  if (/token.*expired|expired.*token|invalid.*token|token.*invalid/i.test(message)) {
+    return "验证码无效或已过期，请重新发送";
+  }
+  return message || fallback;
+}
+
+function updateCloudOtpResendButton() {
+  const button = document.getElementById("accountResendButton");
+  if (!button) return;
+  const seconds = Math.max(0, Math.ceil((cloudOtpResendAt - Date.now()) / 1000));
+  button.textContent = seconds > 0 ? `${seconds} 秒后重发` : "重新发送验证码";
+  button.disabled =
+    seconds > 0 || ["sending", "verifying"].includes(cloudStatus);
+  if (seconds === 0 && cloudOtpResendTimer) {
+    window.clearInterval(cloudOtpResendTimer);
+    cloudOtpResendTimer = null;
+  }
+}
+
+function startCloudOtpCooldown() {
+  window.clearInterval(cloudOtpResendTimer);
+  cloudOtpResendAt = Date.now() + CLOUD_OTP_RESEND_DELAY * 1000;
+  updateCloudOtpResendButton();
+  cloudOtpResendTimer = window.setInterval(updateCloudOtpResendButton, 1000);
+}
+
+function clearCloudOtpState() {
+  cloudOtpPending = false;
+  cloudOtpEmail = "";
+  cloudOtpResendAt = 0;
+  window.clearInterval(cloudOtpResendTimer);
+  cloudOtpResendTimer = null;
+  const otpInput = document.getElementById("accountOtpInput");
+  if (otpInput) otpInput.value = "";
+  updateCloudOtpResendButton();
+}
+
+async function sendCloudLoginCode(email) {
   if (!supabaseClient) {
     showToast("请先完成 Supabase 云端配置");
     return false;
@@ -853,12 +900,36 @@ async function sendCloudLoginLink(email) {
     },
   });
   if (error) {
-    setCloudStatus("error", error.message);
-    showToast(error.message || "登录邮件发送失败");
+    const message = cloudAuthErrorMessage(error, "验证码发送失败");
+    setCloudStatus("error", message);
+    showToast(message);
     return false;
   }
-  setCloudStatus("email-sent", `登录链接已发送至 ${email}`);
-  showToast("登录链接已发送，请前往邮箱查收");
+  cloudOtpEmail = email;
+  cloudOtpPending = true;
+  setCloudStatus("code-sent", `验证码已发送至 ${email}`);
+  startCloudOtpCooldown();
+  window.setTimeout(() => document.getElementById("accountOtpInput")?.focus(), 0);
+  return true;
+}
+
+async function verifyCloudLoginCode(email, token) {
+  if (!supabaseClient) return false;
+  setCloudStatus("verifying");
+  const { data, error } = await supabaseClient.auth.verifyOtp({
+    email,
+    token,
+    type: "email",
+  });
+  if (error || !data.session) {
+    const message = cloudAuthErrorMessage(error, "验证码验证失败");
+    setCloudStatus("error", message);
+    showToast(message);
+    return false;
+  }
+  clearCloudOtpState();
+  await handleCloudSession(data.session, "SIGNED_IN");
+  closeDialog("accountDialog");
   return true;
 }
 
@@ -874,6 +945,7 @@ async function signOutCloudAccount() {
     showToast(error.message || "退出失败");
     return;
   }
+  clearCloudOtpState();
   closeDialog("accountDialog");
   showToast("已退出登录，当前显示本地数据");
 }
@@ -1493,7 +1565,8 @@ function renderAccount() {
     synced: "已同步",
     error: "同步异常",
     sending: "正在发送",
-    "email-sent": "邮件已发送",
+    "code-sent": "验证码已发送",
+    verifying: "正在验证",
     "signed-out": "未登录",
     unconfigured: "未配置",
     local: "本地模式",
@@ -1504,8 +1577,15 @@ function renderAccount() {
   const syncStatus = document.getElementById("accountSyncStatus");
   const emailField = document.getElementById("accountEmailField");
   const emailInput = document.getElementById("accountEmailInput");
+  const otpField = document.getElementById("accountOtpField");
+  const otpInput = document.getElementById("accountOtpInput");
+  const codeActions = document.getElementById("accountCodeActions");
   const submitButton = document.getElementById("accountSubmitButton");
+  const submitIcon = document.getElementById("accountSubmitIcon");
+  const submitLabel = document.getElementById("accountSubmitLabel");
   const signOutButton = document.getElementById("clearAccountButton");
+  const otpPending = cloudOtpPending && !email;
+  const busy = ["sending", "loading", "syncing", "verifying"].includes(cloudStatus);
 
   document.getElementById("accountName").textContent = name;
   document.getElementById("accountState").textContent = email
@@ -1519,12 +1599,19 @@ function renderAccount() {
   document.getElementById("mobileAccountAvatar").textContent = avatar;
 
   emailField.hidden = Boolean(email);
+  emailInput.disabled = otpPending || busy;
+  otpField.hidden = !otpPending;
+  otpInput.disabled = !otpPending || !configured || busy;
+  codeActions.hidden = !otpPending;
   submitButton.hidden = Boolean(email);
-  submitButton.disabled =
-    !configured || ["sending", "loading", "syncing"].includes(cloudStatus);
+  submitButton.disabled = !configured || busy;
+  submitIcon.setAttribute("data-lucide", otpPending ? "shield-check" : "mail");
+  submitLabel.textContent = otpPending ? "验证并登录" : "发送验证码";
   signOutButton.hidden = !email;
   if (email) {
     emailInput.value = email;
+  } else if (otpPending) {
+    emailInput.value = cloudOtpEmail;
   } else if (!emailInput.value && state.account?.email) {
     emailInput.value = state.account.email;
   }
@@ -1542,10 +1629,12 @@ function renderAccount() {
         : "本地修改会自动同步至当前账户。");
   } else if (configured) {
     summaryIcon.setAttribute("data-lucide", "cloud");
-    summaryTitle.textContent =
-      cloudStatus === "email-sent" ? "登录邮件已发送" : "使用邮箱登录";
+    summaryTitle.textContent = otpPending ? "输入邮箱验证码" : "使用邮箱登录";
     summaryDescription.textContent =
-      cloudStatusMessage || "我们会发送免密码登录链接，点击后即可进入你的云端工作区。";
+      cloudStatusMessage ||
+      (otpPending
+        ? `验证码已发送至 ${cloudOtpEmail}`
+        : "我们会发送 6 位验证码，在当前页面验证后即可登录。");
   } else {
     summaryIcon.setAttribute("data-lucide", "cloud-off");
     summaryTitle.textContent = "云同步尚未配置";
@@ -1555,6 +1644,7 @@ function renderAccount() {
 
   syncStatus.textContent = statusLabels[cloudStatus] || "本地模式";
   syncStatus.className = `sync-status is-${cloudStatus}`;
+  updateCloudOtpResendButton();
   refreshIcons();
 }
 
@@ -3739,13 +3829,39 @@ function bindEvents() {
   document.getElementById("mobileAccountButton").addEventListener("click", openAccount);
   document.getElementById("accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const input = document.getElementById("accountEmailInput");
-    const email = input.value.trim();
-    if (!email || !input.checkValidity()) {
-      input.reportValidity();
+    const emailInput = document.getElementById("accountEmailInput");
+    const email = emailInput.value.trim();
+    if (cloudOtpPending) {
+      const otpInput = document.getElementById("accountOtpInput");
+      const token = otpInput.value.replace(/\D/g, "").slice(0, 6);
+      otpInput.value = token;
+      if (token.length !== 6 || !otpInput.checkValidity()) {
+        otpInput.reportValidity();
+        return;
+      }
+      await verifyCloudLoginCode(cloudOtpEmail || email, token);
       return;
     }
-    await sendCloudLoginLink(email);
+    if (!email || !emailInput.checkValidity()) {
+      emailInput.reportValidity();
+      return;
+    }
+    await sendCloudLoginCode(email);
+  });
+  document.getElementById("accountOtpInput").addEventListener("input", (event) => {
+    event.target.value = event.target.value.replace(/\D/g, "").slice(0, 6);
+  });
+  document.getElementById("accountChangeEmailButton").addEventListener("click", () => {
+    clearCloudOtpState();
+    setCloudStatus("signed-out");
+    const input = document.getElementById("accountEmailInput");
+    input.disabled = false;
+    input.focus();
+    input.select();
+  });
+  document.getElementById("accountResendButton").addEventListener("click", async () => {
+    if (!cloudOtpEmail || Date.now() < cloudOtpResendAt) return;
+    await sendCloudLoginCode(cloudOtpEmail);
   });
   document
     .getElementById("clearAccountButton")

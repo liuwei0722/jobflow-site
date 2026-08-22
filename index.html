@@ -6,7 +6,7 @@
     <meta name="description" content="应届求职投递管理、流程跟进与校招公司导航工具">
     <title>进度条 · 求职投递管理</title>
     <link rel="preconnect" href="https://unpkg.com">
-    <link rel="stylesheet" href="./styles.css?v=13">
+    <link rel="stylesheet" href="./styles.css?v=14">
   </head>
   <body>
     <div class="app-shell">
@@ -559,12 +559,29 @@
             <span>邮箱</span>
             <input id="accountEmailInput" type="email" autocomplete="email" required placeholder="name@example.com">
           </label>
+          <label class="stacked-field" id="accountOtpField" hidden>
+            <span>6 位验证码</span>
+            <input
+              id="accountOtpInput"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              pattern="[0-9]{6}"
+              required
+              placeholder="输入邮件中的验证码"
+            >
+          </label>
+          <div class="account-code-actions" id="accountCodeActions" hidden>
+            <button class="text-button" type="button" id="accountChangeEmailButton">更换邮箱</button>
+            <button class="text-button" type="button" id="accountResendButton">重新发送验证码</button>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="button ghost" type="button" id="clearAccountButton" hidden>退出登录</button>
           <button class="button primary" type="submit" id="accountSubmitButton">
-            <i data-lucide="mail"></i>
-            发送登录链接
+            <i data-lucide="mail" id="accountSubmitIcon"></i>
+            <span id="accountSubmitLabel">发送验证码</span>
           </button>
         </div>
       </form>
@@ -634,6 +651,6 @@
     <script src="https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=14"></script>
+    <script src="./app.js?v=15"></script>
   </body>
 </html>

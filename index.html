@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="应届求职投递管理、流程跟进与校招公司导航工具">
+    <title>进度条 · 求职投递管理</title>
+    <link rel="preconnect" href="https://unpkg.com">
+    <link rel="stylesheet" href="./styles.css?v=13">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="进度条首页">
+          <span class="brand-mark" aria-hidden="true">进</span>
+          <span>
+            <strong>进度条</strong>
+            <small>求职投递管理</small>
+          </span>
+        </a>
+
+        <nav class="side-nav" aria-label="主导航">
+          <button class="nav-item is-active" type="button" data-view="dashboard">
+            <i data-lucide="layout-dashboard"></i>
+            <span>总览</span>
+          </button>
+          <button class="nav-item" type="button" data-view="funnel">
+            <i data-lucide="git-branch"></i>
+            <span>漏斗</span>
+          </button>
+          <button class="nav-item" type="button" data-view="applications">
+            <i data-lucide="briefcase-business"></i>
+            <span>投递</span>
+            <span class="nav-count" id="applicationNavCount">0</span>
+          </button>
+          <button class="nav-item" type="button" data-view="companies">
+            <i data-lucide="building-2"></i>
+            <span>公司</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+
+        <figure class="sidebar-visual">
+          <img
+            src="https://copilot-cn.bytedance.net/api/ide/v1/text_to_image?prompt=realistic%20top-down%20photograph%20of%20a%20graduate%20job%20search%20workspace%2C%20laptop%20showing%20a%20clean%20application%20tracking%20table%2C%20printed%20resume%2C%20pen%20and%20small%20calendar%2C%20natural%20daylight%2C%20neutral%20colors%2C%20no%20visible%20words%2C%20professional%20editorial%20photography&image_size=landscape_16_9"
+            alt="求职进度管理工作台"
+          >
+        </figure>
+
+        <div class="sidebar-footer">
+          <button class="sidebar-action" type="button" id="dataButton">
+            <i data-lucide="database"></i>
+            <span>数据与备份</span>
+          </button>
+          <button class="sidebar-action" type="button" id="accountButton">
+            <span class="account-avatar" id="accountAvatar">访</span>
+            <span class="account-copy">
+              <strong id="accountName">本地访客</strong>
+              <small id="accountState">数据保存在此设备</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="pageEyebrow">2027 秋招</p>
+            <h1 id="pageTitle">总览</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" type="button" id="themeToggle" role="switch" aria-checked="false" aria-label="切换为深色模式" title="切换为深色模式">
+              <i data-lucide="moon" id="themeToggleIcon"></i>
+            </button>
+            <button class="icon-button mobile-only" type="button" id="mobileDataButton" aria-label="数据与备份" title="数据与备份">
+              <i data-lucide="database"></i>
+            </button>
+            <button class="account-chip mobile-only" type="button" id="mobileAccountButton" aria-label="账户与云同步">
+              <span class="account-avatar" id="mobileAccountAvatar">访</span>
+            </button>
+            <button class="button primary" type="button" id="globalAddButton">
+              <i data-lucide="plus"></i>
+              <span>新增投递</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="view is-active" id="view-dashboard" aria-labelledby="pageTitle">
+          <div class="date-line">
+            <span id="todayLabel"></span>
+            <span class="date-separator"></span>
+            <span id="progressSummary"></span>
+          </div>
+
+          <section class="quick-capture" aria-label="记录投递进展">
+            <form class="quick-capture-form" id="quickCaptureForm">
+              <div class="quick-capture-input">
+                <i data-lucide="message-square-text"></i>
+                <input
+                  id="quickCaptureInput"
+                  autocomplete="off"
+                  placeholder="输入投递或面试进展，也可上传邮件截图"
+                  aria-label="一句话记录投递进展"
+                >
+                <button class="quick-image-upload-button" type="button" id="quickImageButton" aria-label="上传面试邮件截图" title="上传面试邮件截图">
+                  <i data-lucide="image-up"></i>
+                </button>
+                <input id="quickImageInput" type="file" accept="image/*" hidden>
+              </div>
+              <button class="button primary" type="submit" id="quickCaptureButton">
+                <i data-lucide="scan-text"></i>
+                识别并记录
+              </button>
+            </form>
+            <div class="quick-image-preview" id="quickImagePreview" hidden>
+              <img id="quickImageThumbnail" alt="待识别的面试邮件截图">
+              <span class="quick-image-copy">
+                <strong id="quickImageName"></strong>
+                <small id="quickImageStatus">准备识别</small>
+                <span class="quick-image-progress" aria-hidden="true"><span id="quickImageProgressBar"></span></span>
+              </span>
+              <button class="icon-button" type="button" id="quickImageRemoveButton" aria-label="移除截图" title="移除截图">
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+          </section>
+
+          <div class="stats-grid" id="statsGrid"></div>
+
+          <section class="panel interview-calendar-panel" aria-labelledby="interviewCalendarTitle">
+            <div class="panel-heading calendar-heading">
+              <div>
+                <div class="heading-line">
+                  <h2 id="interviewCalendarTitle">面试日历</h2>
+                  <span class="count-badge" id="calendarConflictCount">本周无冲突</span>
+                </div>
+                <p id="calendarWeekLabel"></p>
+              </div>
+              <div class="calendar-heading-actions">
+                <button class="notification-setting" type="button" id="notificationToggle" role="switch" aria-checked="false">
+                  <i data-lucide="bell"></i>
+                  <span>提前 1 小时提醒</span>
+                  <span class="toggle-track" aria-hidden="true"><span></span></span>
+                </button>
+                <div class="calendar-navigation" aria-label="切换日历周">
+                  <button class="icon-button" type="button" id="calendarPreviousButton" aria-label="上一周" title="上一周">
+                    <i data-lucide="chevron-left"></i>
+                  </button>
+                  <button class="button ghost" type="button" id="calendarTodayButton">本周</button>
+                  <button class="icon-button" type="button" id="calendarNextButton" aria-label="下一周" title="下一周">
+                    <i data-lucide="chevron-right"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="calendar-scroll">
+              <div class="interview-calendar" id="interviewCalendar"></div>
+            </div>
+          </section>
+
+          <section class="panel action-panel" aria-labelledby="actionReminderTitle">
+            <div class="panel-heading">
+              <div>
+                <div class="heading-line">
+                  <h2 id="actionReminderTitle">行动提醒</h2>
+                  <span class="count-badge" id="actionReminderCount">0 项提醒</span>
+                </div>
+                <p>面试、测评从前三天开始提醒，面试结束后自动生成复盘待办</p>
+              </div>
+              <select id="reminderSort" aria-label="提醒排序">
+                <option value="created-desc">生成时间倒序</option>
+                <option value="due-asc">截止时间升序</option>
+              </select>
+            </div>
+            <div class="segmented-control" id="reminderFilters" aria-label="提醒类型">
+              <button class="is-active" type="button" data-reminder-filter="assessment">测评</button>
+              <button type="button" data-reminder-filter="interview">面试</button>
+              <button type="button" data-reminder-filter="review">复盘待办</button>
+            </div>
+            <div class="action-reminder-list" id="actionReminderList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-funnel">
+          <div class="funnel-summary" id="funnelSummary"></div>
+
+          <section class="panel funnel-analysis-panel" aria-labelledby="pipelineFunnelTitle">
+            <div class="panel-heading">
+              <div>
+                <h2 id="pipelineFunnelTitle">当前流程分布</h2>
+                <p>当前停留 / 累计进入，最右侧为对比上一阶段的转化率</p>
+              </div>
+            </div>
+            <div class="pipeline-funnel" id="pipelineFunnel"></div>
+          </section>
+
+          <section class="panel industry-panel" aria-labelledby="industryDistributionTitle">
+            <div class="panel-heading">
+              <div>
+                <h2 id="industryDistributionTitle">行业分布</h2>
+                <p>全部目标岗位的行业构成</p>
+              </div>
+            </div>
+            <div class="distribution" id="funnelIndustryDistribution"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-applications">
+          <div class="section-toolbar">
+            <div class="search-field">
+              <i data-lucide="search"></i>
+              <input id="applicationSearch" type="search" placeholder="搜索公司、部门、岗位或备注" aria-label="搜索投递">
+            </div>
+            <div class="toolbar-controls">
+              <select id="statusFilter" aria-label="按状态筛选"></select>
+              <select id="industryFilter" aria-label="按行业筛选"></select>
+              <button class="csv-export-button" type="button" id="exportCsvButton" aria-label="导出 CSV" title="导出 CSV">
+                <i data-lucide="download"></i>
+                <span>CSV</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="active-filter" id="activeFilter" hidden>
+            <i data-lucide="filter"></i>
+            <span id="activeFilterText"></span>
+            <button type="button" id="clearFilterButton">清除</button>
+          </div>
+
+          <div class="application-list-panel">
+            <div class="compact-application-list" id="applicationRows"></div>
+            <div class="empty-state" id="applicationEmpty" hidden>
+              <i data-lucide="inbox"></i>
+              <h3>没有符合条件的投递</h3>
+              <p>调整筛选条件，或新建一条投递记录。</p>
+              <button class="button primary" type="button" data-open-application>
+                <i data-lucide="plus"></i>
+                新增投递
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-companies">
+          <div class="company-toolbar">
+            <div class="search-field">
+              <i data-lucide="search"></i>
+              <input id="companySearch" type="search" placeholder="搜索公司或方向" aria-label="搜索公司">
+            </div>
+            <div class="company-filters" id="companyFilters" aria-label="公司分类"></div>
+          </div>
+
+          <div class="company-status-band">
+            <div>
+              <strong id="companyResultCount">0 家公司</strong>
+              <span>校招入口与开放状态以企业官网最终信息为准</span>
+            </div>
+            <span class="last-checked">示例库 · MVP</span>
+          </div>
+
+          <div class="company-grid" id="companyGrid"></div>
+          <div class="empty-state company-empty" id="companyEmpty" hidden>
+            <i data-lucide="building-2"></i>
+            <h3>没有匹配的公司</h3>
+            <p>尝试更换关键词或行业分类。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <nav class="mobile-nav" aria-label="移动端导航">
+      <button class="is-active" type="button" data-view="dashboard">
+        <i data-lucide="layout-dashboard"></i>
+        <span>总览</span>
+      </button>
+      <button type="button" data-view="funnel">
+        <i data-lucide="git-branch"></i>
+        <span>漏斗</span>
+      </button>
+      <button type="button" data-view="applications">
+        <i data-lucide="briefcase-business"></i>
+        <span>投递</span>
+      </button>
+      <button type="button" data-view="companies">
+        <i data-lucide="building-2"></i>
+        <span>公司</span>
+      </button>
+    </nav>
+
+    <dialog class="modal wide-modal application-editor-modal" id="applicationDialog">
+      <form method="dialog" id="applicationForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">投递记录</p>
+            <h2 id="applicationDialogTitle">新增投递</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="applicationDialog" aria-label="关闭" title="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="applicationId">
+          <div class="form-grid application-form-grid">
+            <label>
+              <span>公司 <b>*</b></span>
+              <input id="companyInput" name="company" required placeholder="例如：字节跳动">
+            </label>
+            <label>
+              <span>部门 / 事业群</span>
+              <input id="departmentInput" name="department" placeholder="例如：商业化部门">
+            </label>
+            <label>
+              <span>岗位 <b>*</b></span>
+              <input id="roleInput" name="role" required placeholder="例如：策略运营">
+            </label>
+            <label>
+              <span>行业</span>
+              <select id="industryInput" name="industry"></select>
+            </label>
+            <label>
+              <span>当前进展</span>
+              <select id="statusInput" name="status"></select>
+            </label>
+            <label>
+              <span>投递渠道</span>
+              <select id="channelInput" name="channel"></select>
+            </label>
+            <label>
+              <span>城市</span>
+              <input id="cityInput" name="city" placeholder="例如：北京">
+            </label>
+            <label>
+              <span>投递日期</span>
+              <input id="appliedDateInput" name="appliedDate" type="date">
+            </label>
+            <label>
+              <span>下次跟进</span>
+              <input id="nextActionDateInput" name="nextActionDate" type="date">
+            </label>
+            <label>
+              <span>岗位链接</span>
+              <input id="linkInput" name="link" type="url" placeholder="https://">
+            </label>
+            <label class="form-span">
+              <span>备注</span>
+              <textarea id="notesInput" name="notes" rows="2" placeholder="记录 JD 关键词、内推人或下一步动作"></textarea>
+            </label>
+          </div>
+
+          <section class="editor-section application-jd-section">
+            <div class="editor-section-heading">
+              <div>
+                <h3>JD 截图</h3>
+                <p>支持选择、拖拽或粘贴图片，可保存多张</p>
+              </div>
+              <span class="section-count" id="jdCount">0 张</span>
+            </div>
+            <div class="jd-dropzone" id="jdDropzone" tabindex="0">
+              <i data-lucide="image-plus"></i>
+              <strong>添加 JD 截图</strong>
+              <span>拖到这里，或按 Ctrl / Cmd + V 粘贴</span>
+              <input id="jdFileInput" type="file" accept="image/*" multiple aria-label="选择 JD 截图">
+            </div>
+            <div class="jd-gallery" id="jdGallery"></div>
+          </section>
+
+          <section class="editor-section application-progress-section" id="progressEditorSection">
+            <div class="editor-section-heading">
+              <div>
+                <h3>进展时间线</h3>
+                <p>每次进展保留发生日期和实际记录时间</p>
+              </div>
+              <button class="button secondary" type="button" id="openProgressButton">
+                <i data-lucide="plus"></i>
+                新增进展
+              </button>
+            </div>
+            <div class="progress-timeline" id="progressTimeline"></div>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button class="button danger button-left" type="button" id="deleteApplicationButton" hidden>
+            <i data-lucide="trash-2"></i>
+            删除
+          </button>
+          <button class="button ghost" type="button" data-close-dialog="applicationDialog">取消</button>
+          <button class="button primary" type="submit">
+            <i data-lucide="check"></i>
+            保存记录
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="capturePreviewDialog">
+      <form method="dialog" id="capturePreviewForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">识别结果</p>
+            <h2>确认后记录</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="capturePreviewDialog" aria-label="关闭" title="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="parse-summary" id="parseSummary"></div>
+          <div class="form-grid">
+            <label class="form-span">
+              <span>保存方式</span>
+              <select id="captureTargetInput"></select>
+            </label>
+            <label>
+              <span>进展日期 <b>*</b></span>
+              <input id="captureEventDateInput" type="date" required>
+            </label>
+            <label>
+              <span>记录日期</span>
+              <input id="captureRecordedDateInput" readonly>
+            </label>
+            <label>
+              <span>公司 <b>*</b></span>
+              <input id="captureCompanyInput" required>
+            </label>
+            <label>
+              <span>部门 / 事业群</span>
+              <input id="captureDepartmentInput">
+            </label>
+            <label>
+              <span>岗位 <b>*</b></span>
+              <input id="captureRoleInput" required>
+            </label>
+            <label>
+              <span>进展 <b>*</b></span>
+              <select id="captureStageInput"></select>
+            </label>
+            <label>
+              <span>投递渠道</span>
+              <select id="captureChannelInput"></select>
+            </label>
+            <label>
+              <span>开始 / 截止时间</span>
+              <input id="captureScheduledAtInput" type="datetime-local">
+            </label>
+            <label>
+              <span>结束时间</span>
+              <input id="captureEndedAtInput" type="datetime-local">
+            </label>
+            <label class="form-span">
+              <span>其他备注</span>
+              <textarea id="captureNoteInput" rows="4" placeholder="补充下一步动作、面试安排或其他信息"></textarea>
+            </label>
+          </div>
+          <section class="editor-section capture-jd-section">
+            <div class="editor-section-heading">
+              <div>
+                <h3>岗位 JD 截图</h3>
+                <p>确认记录时一并保存，已有岗位会追加图片</p>
+              </div>
+              <span class="section-count" id="captureJdCount">0 张</span>
+            </div>
+            <div class="jd-dropzone" id="captureJdDropzone" tabindex="0">
+              <i data-lucide="image-plus"></i>
+              <strong>添加 JD 截图</strong>
+              <span>支持选择、拖拽或粘贴图片</span>
+              <input id="captureJdFileInput" type="file" accept="image/*" multiple aria-label="选择 JD 截图">
+            </div>
+            <div class="jd-gallery" id="captureJdGallery"></div>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button class="button ghost" type="button" data-close-dialog="capturePreviewDialog">取消</button>
+          <button class="button primary" type="submit">
+            <i data-lucide="check"></i>
+            确认记录
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal compact-modal" id="progressDialog">
+      <form method="dialog" id="progressForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">岗位进展</p>
+            <h2 id="progressDialogTitle">新增进展</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="progressDialog" aria-label="关闭" title="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <input id="progressIdInput" type="hidden">
+          <div class="form-grid">
+            <label>
+              <span>进展 <b>*</b></span>
+              <select id="progressStageInput"></select>
+            </label>
+            <label>
+              <span>进展日期 <b>*</b></span>
+              <input id="progressDateInput" type="date" required>
+            </label>
+            <label>
+              <span>开始 / 截止时间</span>
+              <input id="progressScheduledAtInput" type="datetime-local">
+            </label>
+            <label>
+              <span>结束时间</span>
+              <input id="progressEndedAtInput" type="datetime-local">
+            </label>
+            <label class="form-span">
+              <span>备注</span>
+              <textarea id="progressNoteInput" rows="4" placeholder="例如：收到测评链接，要求三天内完成"></textarea>
+            </label>
+            <label class="form-span">
+              <span>面试评价 / 复盘</span>
+              <textarea id="progressReviewInput" rows="5" placeholder="记录面试问题、表现评价和下一次改进动作；填写后复盘待办会自动完成"></textarea>
+            </label>
+            <label class="form-span readonly-field">
+              <span>记录时间</span>
+              <input id="progressRecordedAtInput" readonly>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="button danger button-left" type="button" id="deleteProgressButton" hidden>
+            <i data-lucide="trash-2"></i>
+            删除
+          </button>
+          <button class="button ghost" type="button" data-close-dialog="progressDialog">取消</button>
+          <button class="button primary" type="submit">保存进展</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal compact-modal" id="accountDialog">
+      <form method="dialog" id="accountForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">账户</p>
+            <h2>邮箱登录与云同步</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="accountDialog" aria-label="关闭" title="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="account-summary">
+            <i data-lucide="cloud" id="accountSummaryIcon"></i>
+            <div>
+              <strong id="accountSummaryTitle">正在检查云端配置</strong>
+              <p id="accountSummaryDescription">请稍候。</p>
+              <span class="sync-status" id="accountSyncStatus">本地模式</span>
+            </div>
+          </div>
+          <label class="stacked-field" id="accountEmailField">
+            <span>邮箱</span>
+            <input id="accountEmailInput" type="email" autocomplete="email" required placeholder="name@example.com">
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="button ghost" type="button" id="clearAccountButton" hidden>退出登录</button>
+          <button class="button primary" type="submit" id="accountSubmitButton">
+            <i data-lucide="mail"></i>
+            发送登录链接
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal compact-modal" id="dataDialog">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">数据管理</p>
+          <h2>数据与备份</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="dataDialog" aria-label="关闭" title="关闭">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="data-actions">
+          <button class="data-action" type="button" id="exportJsonButton">
+            <i data-lucide="file-down"></i>
+            <span><strong>导出文本与进展</strong><small>保存为 JSON 文件，不包含 JD 图片</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <label class="data-action" for="importJsonInput">
+            <i data-lucide="file-up"></i>
+            <span><strong>导入备份</strong><small>合并到当前工作区</small></span>
+            <i data-lucide="chevron-right"></i>
+          </label>
+          <input id="importJsonInput" type="file" accept="application/json,.json" hidden>
+          <button class="data-action danger-row" type="button" id="resetDemoButton">
+            <i data-lucide="rotate-ccw"></i>
+            <span><strong>恢复示例数据</strong><small>覆盖当前工作区记录</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="data-action danger-row" type="button" id="clearCloudWorkspaceButton" hidden>
+            <i data-lucide="cloud-off"></i>
+            <span><strong>清空当前云端工作区</strong><small>仅删除当前登录邮箱的数据和 JD 截图</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="confirm-popover" id="confirmPopover" role="alertdialog" aria-modal="true" hidden>
+      <div class="confirm-card">
+        <i data-lucide="triangle-alert"></i>
+        <div>
+          <h2 id="confirmTitle">确认操作</h2>
+          <p id="confirmMessage"></p>
+        </div>
+        <div class="confirm-actions">
+          <button class="button ghost" type="button" id="confirmCancelButton">取消</button>
+          <button class="button danger" type="button" id="confirmAcceptButton">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="image-lightbox" id="imageLightbox" hidden>
+      <button class="icon-button" type="button" id="closeLightboxButton" aria-label="关闭大图" title="关闭">
+        <i data-lucide="x"></i>
+      </button>
+      <img id="lightboxImage" alt="JD 截图大图">
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js"></script>
+    <script src="./app.js?v=14"></script>
+  </body>
+</html>

@@ -1,0 +1,3864 @@
+const STORAGE_KEY = "jobflow_mvp_v1";
+const THEME_STORAGE_KEY = "jobflow_theme_v1";
+const LOCAL_MIGRATION_OWNER_KEY = "jobflow_local_migration_owner_v1";
+const ASSET_DB_NAME = "jobflow_assets_v1";
+const ASSET_STORE_NAME = "jd_images";
+const CLOUD_STATE_TABLE = "user_states";
+const CLOUD_ASSET_BUCKET = "jd-images";
+const CLOUD_SYNC_DELAY = 500;
+
+const STATUS = [
+  { value: "wish", label: "想投", color: "#6B7280", icon: "bookmark" },
+  { value: "applied", label: "已投递", color: "#2D5BFF", icon: "send" },
+  { value: "assessment", label: "测评", color: "#7950a6", icon: "file-check-2" },
+  { value: "first", label: "一面", color: "#E5940C", icon: "messages-square" },
+  { value: "second", label: "二面", color: "#E5940C", icon: "message-square-more" },
+  { value: "final", label: "终面", color: "#E5940C", icon: "users-round" },
+  { value: "offer", label: "Offer", color: "#0EA672", icon: "badge-check" },
+  { value: "rejected", label: "已结束", color: "#DC3545", icon: "circle-x" },
+  { value: "other", label: "其他", color: "#6B7280", icon: "circle-ellipsis" },
+];
+
+const STATUS_MAP = Object.fromEntries(STATUS.map((item) => [item.value, item]));
+const FUNNEL_STAGES = ["applied", "assessment", "first", "second", "final", "offer"];
+const INTERVIEW_STAGES = new Set(["first", "second", "final"]);
+const OLD_STATUS_MAP = {
+  written: "assessment",
+  interview: "first",
+  reject: "rejected",
+  archive: "rejected",
+};
+
+const INDUSTRIES = [
+  "互联网平台",
+  "AI / 大模型",
+  "电商 / 零售",
+  "内容社区",
+  "本地生活",
+  "智能硬件",
+  "金融 / 咨询",
+  "其他",
+];
+
+const CHANNELS = ["官网", "Boss", "内推", "线下", "其他"];
+
+const COMPANIES = [
+  {
+    name: "字节跳动",
+    aliases: ["字节", "抖音", "豆包"],
+    category: "互联网平台",
+    stage: "open",
+    url: "https://jobs.bytedance.com/campus",
+    direction: "策略运营、产品运营、商业分析、数据分析",
+    meta: ["北京 / 上海", "产品与运营", "全球化业务"],
+    color: "#315efb",
+  },
+  {
+    name: "腾讯",
+    aliases: ["鹅厂"],
+    category: "互联网平台",
+    stage: "preheat",
+    url: "https://join.qq.com/",
+    direction: "产品策划、内容运营、用户研究、商业分析",
+    meta: ["深圳 / 北京", "产品与市场", "内容生态"],
+    color: "#0878d1",
+  },
+  {
+    name: "阿里巴巴",
+    aliases: ["阿里", "淘天", "淘宝", "天猫"],
+    category: "电商 / 零售",
+    stage: "preheat",
+    url: "https://talent.alibaba.com/campus/home",
+    direction: "平台运营、行业运营、用户增长、数据策略",
+    meta: ["杭州 / 北京", "电商平台", "经营分析"],
+    color: "#ff6a00",
+  },
+  {
+    name: "美团",
+    aliases: ["美团点评"],
+    category: "本地生活",
+    stage: "open",
+    url: "https://zhaopin.meituan.com/web/campus",
+    direction: "策略运营、商业分析、用户运营、供给运营",
+    meta: ["北京 / 上海", "本地生活", "数据驱动"],
+    color: "#d59a00",
+  },
+  {
+    name: "百度",
+    aliases: [],
+    category: "AI / 大模型",
+    stage: "open",
+    url: "https://talent.baidu.com/jobs/list",
+    direction: "AI 产品运营、策略分析、商业产品、用户增长",
+    meta: ["北京", "AI 应用", "产品运营"],
+    color: "#2932e1",
+  },
+  {
+    name: "小红书",
+    aliases: ["红书"],
+    category: "内容社区",
+    stage: "preheat",
+    url: "https://campus.xiaohongshu.com/",
+    direction: "社区运营、商业化运营、产品运营、内容策略",
+    meta: ["上海 / 北京", "内容社区", "商业化"],
+    color: "#e7334f",
+  },
+  {
+    name: "京东",
+    aliases: ["JD"],
+    category: "电商 / 零售",
+    stage: "open",
+    url: "https://campus.jd.com/",
+    direction: "采销运营、平台运营、经营分析、供应链策略",
+    meta: ["北京", "零售电商", "供应链"],
+    color: "#c9282d",
+  },
+  {
+    name: "快手",
+    aliases: [],
+    category: "内容社区",
+    stage: "preheat",
+    url: "https://campus.kuaishou.cn/",
+    direction: "内容运营、电商策略、用户增长、商业化分析",
+    meta: ["北京 / 杭州", "短视频", "直播电商"],
+    color: "#e65b34",
+  },
+  {
+    name: "拼多多",
+    aliases: ["PDD"],
+    category: "电商 / 零售",
+    stage: "open",
+    url: "https://careers.pddglobalhr.com/campus/grad",
+    direction: "运营管培、消费者运营、商业分析、平台招商",
+    meta: ["上海", "电商平台", "运营管培"],
+    color: "#b92d29",
+  },
+  {
+    name: "哔哩哔哩",
+    aliases: ["B站", "b站"],
+    category: "内容社区",
+    stage: "watch",
+    url: "https://jobs.bilibili.com/campus/positions",
+    direction: "内容运营、用户运营、商业化策略、产品运营",
+    meta: ["上海", "内容生态", "年轻用户"],
+    color: "#1688a8",
+  },
+  {
+    name: "智谱 AI",
+    aliases: ["智谱", "GLM"],
+    category: "AI / 大模型",
+    stage: "preheat",
+    url: "https://www.zhipuai.cn/",
+    direction: "AI 产品、增长运营、开发者生态、商业化",
+    meta: ["北京", "大模型", "开发者生态"],
+    color: "#3859dd",
+  },
+  {
+    name: "MiniMax",
+    aliases: ["minimax", "海螺"],
+    category: "AI / 大模型",
+    stage: "open",
+    url: "https://vrfi1sk8a0.jobs.feishu.cn/379481/",
+    direction: "AI 产品运营、内容增长、用户研究、国际化",
+    meta: ["上海 / 北京", "多模态", "全球化"],
+    color: "#c94f5e",
+  },
+  {
+    name: "月之暗面",
+    aliases: ["Kimi", "kimi"],
+    category: "AI / 大模型",
+    stage: "preheat",
+    url: "https://careers.kimi.com/zh-cn",
+    direction: "AI 产品、用户增长、开发者运营、商业分析",
+    meta: ["北京 / 上海", "Kimi", "AI 应用"],
+    color: "#24282b",
+  },
+  {
+    name: "蚂蚁集团",
+    aliases: ["蚂蚁", "支付宝"],
+    category: "金融 / 咨询",
+    stage: "open",
+    url: "https://talent.antgroup.com/campus/home",
+    direction: "策略运营、数字金融、商业分析、产品运营",
+    meta: ["杭州 / 上海", "数字金融", "平台产品"],
+    color: "#1677c8",
+  },
+  {
+    name: "滴滴",
+    aliases: [],
+    category: "本地生活",
+    stage: "open",
+    url: "https://campus.didiglobal.com/",
+    direction: "城市运营、策略运营、商业分析、用户增长",
+    meta: ["北京 / 杭州", "出行平台", "经营策略"],
+    color: "#d76910",
+  },
+  {
+    name: "SHEIN",
+    aliases: ["希音"],
+    category: "电商 / 零售",
+    stage: "preheat",
+    url: "https://careers.shein.cn/campus",
+    direction: "跨境运营、商品策略、用户增长、数据分析",
+    meta: ["广州 / 南京", "跨境电商", "全球市场"],
+    color: "#35393c",
+  },
+  {
+    name: "小米",
+    aliases: [],
+    category: "智能硬件",
+    stage: "open",
+    url: "https://hr.xiaomi.com/campus",
+    direction: "产品运营、新零售运营、用户研究、商业分析",
+    meta: ["北京 / 武汉", "人车家", "消费电子"],
+    color: "#d85c00",
+  },
+  {
+    name: "理想汽车",
+    aliases: ["理想"],
+    category: "智能硬件",
+    stage: "open",
+    url: "https://lixiang.jobs.feishu.cn/",
+    direction: "用户运营、产品运营、商业分析、销售策略",
+    meta: ["北京 / 上海", "智能汽车", "用户运营"],
+    color: "#177f77",
+  },
+];
+
+const ROLE_KEYWORDS = [
+  "AI 策略运营",
+  "AI策略运营",
+  "AI 产品运营",
+  "AI产品运营",
+  "商业化运营",
+  "消费者运营",
+  "开发者运营",
+  "供应链策略",
+  "商业分析",
+  "经营分析",
+  "策略运营",
+  "产品运营",
+  "平台运营",
+  "用户运营",
+  "内容运营",
+  "增长运营",
+  "行业运营",
+  "城市运营",
+  "社区运营",
+  "数据分析",
+  "产品经理",
+  "产品策划",
+  "运营管培",
+  "管培生",
+  "市场运营",
+  "品牌运营",
+  "采销运营",
+];
+
+const VIEW_META = {
+  dashboard: { eyebrow: "求职行动中心", title: "总览" },
+  funnel: { eyebrow: "阶段转化分析", title: "漏斗" },
+  applications: { eyebrow: "全流程管理", title: "投递管理" },
+  companies: { eyebrow: "目标公司库", title: "公司导航" },
+};
+
+let currentView = "dashboard";
+let reminderFilter = "assessment";
+let companyCategory = "全部";
+let specialFilter = "";
+let confirmCallback = null;
+let toastTimer = null;
+let captureDraft = null;
+let editingApplicationId = "";
+let pendingJdImages = [];
+let capturePendingJdImages = [];
+let quickCaptureImage = null;
+let quickOcrBusy = false;
+let assetDbPromise = null;
+let calendarWeekOffset = 0;
+let notificationTimer = null;
+let supabaseClient = null;
+let cloudUser = null;
+let cloudSyncReady = false;
+let cloudSyncTimer = null;
+let cloudMutationVersion = 0;
+let cloudSyncInFlight = false;
+let cloudSessionLoadingId = "";
+let cloudStatus = "local";
+let cloudStatusMessage = "";
+
+function dateOffset(days) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function timestampOffset(days, hours = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  date.setHours(date.getHours() + hours);
+  return date.toISOString();
+}
+
+function today() {
+  const date = new Date();
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function makeId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function normalizeStatus(value) {
+  const mapped = OLD_STATUS_MAP[value] || value;
+  return STATUS_MAP[mapped] ? mapped : "other";
+}
+
+function normalizeChannel(value) {
+  const channel = String(value || "").trim();
+  if (/^boss(?:直聘)?$/i.test(channel)) return "Boss";
+  return CHANNELS.includes(channel) ? channel : "其他";
+}
+
+function createProgress(
+  stage,
+  eventDate,
+  note = "",
+  recordedAt = new Date().toISOString(),
+  source = "manual",
+  details = {},
+) {
+  return {
+    id: makeId(),
+    stage: normalizeStatus(stage),
+    eventDate: eventDate || today(),
+    recordedAt,
+    note: String(note || "").trim(),
+    source,
+    scheduledAt: details.scheduledAt || "",
+    endedAt: details.endedAt || "",
+    review: String(details.review || "").trim(),
+  };
+}
+
+function progressSort(a, b) {
+  const dateCompare = String(a.eventDate || "").localeCompare(String(b.eventDate || ""));
+  if (dateCompare !== 0) return dateCompare;
+  return String(a.recordedAt || "").localeCompare(String(b.recordedAt || ""));
+}
+
+function getProgress(application) {
+  return Array.isArray(application.progress)
+    ? [...application.progress].sort(progressSort)
+    : [];
+}
+
+function getLatestProgress(application) {
+  const items = getProgress(application);
+  return items[items.length - 1] || null;
+}
+
+function syncApplicationFromProgress(application) {
+  application.progress = getProgress(application);
+  const latest = getLatestProgress(application);
+  application.status = latest ? normalizeStatus(latest.stage) : "wish";
+  if (!application.appliedDate) {
+    const applied = application.progress.find((item) => item.stage === "applied");
+    if (applied) application.appliedDate = applied.eventDate;
+  }
+  return application;
+}
+
+function normalizeApplication(application) {
+  const normalizedStatus = normalizeStatus(application.status || "wish");
+  const updatedAt = application.updatedAt || application.createdAt || new Date().toISOString();
+  const progress = Array.isArray(application.progress)
+    ? application.progress.map((item) => ({
+        id: item.id || makeId(),
+        stage: normalizeStatus(item.stage || item.status),
+        eventDate: item.eventDate || item.date || String(updatedAt).slice(0, 10) || today(),
+        recordedAt: item.recordedAt || item.createdAt || updatedAt,
+        note: String(item.note || item.notes || "").trim(),
+        source: item.source || "manual",
+        scheduledAt: item.scheduledAt || item.startAt || item.deadlineAt || "",
+        endedAt: item.endedAt || item.endAt || "",
+        review: String(item.review || item.evaluation || "").trim(),
+      }))
+    : [
+        createProgress(
+          normalizedStatus,
+          application.appliedDate || String(updatedAt).slice(0, 10) || today(),
+          "由旧版当前状态迁移",
+          updatedAt,
+          "migration",
+        ),
+      ];
+
+  return syncApplicationFromProgress({
+    id: application.id || makeId(),
+    company: String(application.company || "").trim(),
+    department: String(application.department || "").trim(),
+    role: String(application.role || application.position || "待确认岗位").trim(),
+    industry: INDUSTRIES.includes(application.industry) ? application.industry : "其他",
+    channel: normalizeChannel(application.channel),
+    city: String(application.city || "").trim(),
+    status: normalizedStatus,
+    appliedDate: application.appliedDate || "",
+    nextActionDate: application.nextActionDate || "",
+    link: application.link || "",
+    notes: String(application.notes || "").trim(),
+    jdCount: Number(application.jdCount) || 0,
+    progress,
+    createdAt: application.createdAt || updatedAt,
+    updatedAt,
+  });
+}
+
+function migrateState(raw) {
+  const applications = Array.isArray(raw.applications)
+    ? raw.applications.map(normalizeApplication)
+    : [];
+  return {
+    version: 4,
+    account: raw.account && typeof raw.account === "object" ? raw.account : { email: "" },
+    settings: {
+      interviewNotifications: Boolean(raw.settings?.interviewNotifications),
+      notificationHistory: Array.isArray(raw.settings?.notificationHistory)
+        ? raw.settings.notificationHistory.slice(-100)
+        : [],
+    },
+    applications,
+    legacyEvents: Array.isArray(raw.legacyEvents)
+      ? raw.legacyEvents
+      : Array.isArray(raw.events)
+        ? raw.events
+        : [],
+  };
+}
+
+function makeDemoApplication(config) {
+  const progress = config.progress.map(([stage, days, note, recordHours = 0, details = {}]) =>
+    createProgress(
+      stage,
+      dateOffset(days),
+      note,
+      timestampOffset(days, recordHours),
+      "demo",
+      details,
+    ),
+  );
+  const applied = progress.find((item) => item.stage === "applied");
+  return syncApplicationFromProgress({
+    id: makeId(),
+    company: config.company,
+    department: config.department || "",
+    role: config.role,
+    industry: config.industry,
+    channel: config.channel,
+    city: config.city,
+    status: progress[progress.length - 1].stage,
+    appliedDate: applied ? applied.eventDate : "",
+    nextActionDate: config.nextActionDate || "",
+    link: config.link,
+    notes: config.notes || "",
+    jdCount: 0,
+    progress,
+    createdAt: progress[0].recordedAt,
+    updatedAt: progress[progress.length - 1].recordedAt,
+  });
+}
+
+function buildDemoState() {
+  return {
+    version: 4,
+    account: { email: "" },
+    settings: {
+      interviewNotifications: false,
+      notificationHistory: [],
+    },
+    legacyEvents: [],
+    applications: [
+      makeDemoApplication({
+        company: "字节跳动",
+        department: "商业化部门",
+        role: "AI 策略运营",
+        industry: "互联网平台",
+        channel: "内推",
+        city: "北京",
+        nextActionDate: dateOffset(1),
+        link: "https://jobs.bytedance.com/campus",
+        notes: "准备业务分析案例与产品拆解",
+        progress: [
+          ["applied", -16, "通过内推完成投递"],
+          ["assessment", -11, "收到在线测评"],
+          ["first", -4, "一面通过，重点追问策略归因"],
+          ["second", -1, "进入二面，下周准备案例分析"],
+        ],
+      }),
+      makeDemoApplication({
+        company: "美团",
+        department: "到店事业群",
+        role: "商业分析",
+        industry: "本地生活",
+        channel: "官网",
+        city: "北京",
+        nextActionDate: dateOffset(-1),
+        link: "https://zhaopin.meituan.com/web/campus",
+        notes: "整理本地生活行业框架",
+        progress: [
+          ["applied", -12, "官网投递"],
+          ["assessment", -3, "收到测评，要求三天内完成"],
+        ],
+      }),
+      makeDemoApplication({
+        company: "腾讯",
+        department: "PCG",
+        role: "产品运营",
+        industry: "互联网平台",
+        channel: "内推",
+        city: "深圳",
+        nextActionDate: dateOffset(-2),
+        link: "https://join.qq.com/",
+        notes: "关注内容生态与 AI 产品方向",
+        progress: [["applied", -9, "内推投递"]],
+      }),
+      makeDemoApplication({
+        company: "蚂蚁集团",
+        department: "",
+        role: "策略运营",
+        industry: "金融 / 咨询",
+        channel: "官网",
+        city: "杭州",
+        nextActionDate: dateOffset(5),
+        link: "https://talent.antgroup.com/campus/home",
+        notes: "完善支付业务案例后投递",
+        progress: [["wish", -5, "加入目标公司"]],
+      }),
+      makeDemoApplication({
+        company: "小红书",
+        department: "商业化事业部",
+        role: "商业化运营",
+        industry: "内容社区",
+        channel: "官网",
+        city: "上海",
+        nextActionDate: dateOffset(0),
+        link: "https://campus.xiaohongshu.com/",
+        notes: "准备社区商业化和内容供给分析",
+        progress: [
+          ["applied", -18, "官网投递"],
+          [
+            "first",
+            -2,
+            "完成一面，待记录复盘",
+            0,
+            {
+              scheduledAt: `${dateOffset(-2)}T14:00`,
+              endedAt: `${dateOffset(-2)}T15:00`,
+            },
+          ],
+        ],
+      }),
+      makeDemoApplication({
+        company: "月之暗面",
+        department: "用户增长团队",
+        role: "用户增长运营",
+        industry: "AI / 大模型",
+        channel: "官网",
+        city: "北京",
+        nextActionDate: dateOffset(3),
+        link: "https://careers.kimi.com/zh-cn",
+        notes: "补充 AI 产品使用与增长策略分析",
+        progress: [["applied", -4, "官网投递"]],
+      }),
+      makeDemoApplication({
+        company: "京东",
+        department: "零售业务",
+        role: "平台运营",
+        industry: "电商 / 零售",
+        channel: "其他",
+        city: "北京",
+        link: "https://campus.jd.com/",
+        notes: "复盘岗位匹配与案例表达",
+        progress: [
+          ["applied", -24, "转正流程"],
+          ["rejected", -8, "流程结束"],
+        ],
+      }),
+      makeDemoApplication({
+        company: "百度",
+        department: "文心产品部",
+        role: "AI 产品运营",
+        industry: "AI / 大模型",
+        channel: "内推",
+        city: "北京",
+        link: "https://talent.baidu.com/jobs/list",
+        notes: "等待意向沟通",
+        progress: [
+          ["applied", -31, "内推投递"],
+          ["assessment", -26, "完成测评"],
+          ["first", -20, "一面通过"],
+          ["second", -14, "二面通过"],
+          ["final", -7, "完成终面"],
+          ["offer", -1, "收到录用意向", -3],
+        ],
+      }),
+    ],
+  };
+}
+
+function buildEmptyState(email = "") {
+  return {
+    version: 4,
+    account: { email },
+    settings: {
+      interviewNotifications: false,
+      notificationHistory: [],
+    },
+    legacyEvents: [],
+    applications: [],
+  };
+}
+
+function loadState(storageKey = STORAGE_KEY, fallback = null) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey));
+    if (parsed && Array.isArray(parsed.applications)) {
+      const migrated = migrateState(parsed);
+      localStorage.setItem(storageKey, JSON.stringify(migrated));
+      return migrated;
+    }
+  } catch (error) {
+    console.warn("Local data could not be read.", error);
+  }
+  const initial = fallback ? migrateState(fallback) : buildDemoState();
+  localStorage.setItem(storageKey, JSON.stringify(initial));
+  return initial;
+}
+
+let state = loadState();
+
+function cloudStateStorageKey(userId = cloudUser?.id) {
+  return userId ? `${STORAGE_KEY}:cloud:${userId}` : STORAGE_KEY;
+}
+
+function cloudPendingStorageKey(userId = cloudUser?.id) {
+  return `${cloudStateStorageKey(userId)}:pending`;
+}
+
+function saveState() {
+  state.version = 4;
+  if (cloudUser?.email) state.account = { email: cloudUser.email };
+  localStorage.setItem(cloudStateStorageKey(), JSON.stringify(state));
+  if (cloudUser && cloudSyncReady) {
+    localStorage.setItem(cloudPendingStorageKey(), new Date().toISOString());
+    cloudMutationVersion += 1;
+    queueCloudStateSync();
+  }
+}
+
+function getCloudConfig() {
+  const config = window.JOBFLOW_CLOUD_CONFIG || {};
+  const url = String(config.url || "").trim();
+  const key = String(config.publishableKey || config.anonKey || "").trim();
+  const configured =
+    /^https:\/\/.+\.supabase\.co$/i.test(url) &&
+    key.length > 20 &&
+    !url.includes("YOUR_") &&
+    !key.includes("YOUR_");
+  return { url, key, configured };
+}
+
+function setCloudStatus(status, message = "") {
+  cloudStatus = status;
+  cloudStatusMessage = message;
+  if (document.readyState !== "loading") renderAccount();
+}
+
+function serializableCloudState() {
+  const snapshot = JSON.parse(JSON.stringify(state));
+  snapshot.version = 4;
+  snapshot.account = { email: cloudUser?.email || "" };
+  return snapshot;
+}
+
+function queueCloudStateSync() {
+  if (!supabaseClient || !cloudUser || !cloudSyncReady) return;
+  window.clearTimeout(cloudSyncTimer);
+  setCloudStatus("pending");
+  cloudSyncTimer = window.setTimeout(() => {
+    uploadCloudState();
+  }, CLOUD_SYNC_DELAY);
+}
+
+async function uploadCloudState() {
+  if (!supabaseClient || !cloudUser || !cloudSyncReady) return false;
+  if (cloudSyncInFlight) {
+    queueCloudStateSync();
+    return false;
+  }
+  window.clearTimeout(cloudSyncTimer);
+  const revision = cloudMutationVersion;
+  cloudSyncInFlight = true;
+  setCloudStatus("syncing");
+  try {
+    const { error } = await supabaseClient.from(CLOUD_STATE_TABLE).upsert(
+      {
+        user_id: cloudUser.id,
+        state: serializableCloudState(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    if (error) throw error;
+    if (revision === cloudMutationVersion) {
+      localStorage.removeItem(cloudPendingStorageKey());
+    }
+    setCloudStatus("synced");
+    return true;
+  } catch (error) {
+    console.error("Cloud state sync failed.", error);
+    setCloudStatus("error", error.message || "云端同步失败");
+    return false;
+  } finally {
+    cloudSyncInFlight = false;
+    if (revision !== cloudMutationVersion) queueCloudStateSync();
+  }
+}
+
+async function loadCloudStateForUser(user, previousState) {
+  cloudSyncReady = false;
+  setCloudStatus("loading");
+  const storageKey = cloudStateStorageKey(user.id);
+  const hadCachedState = Boolean(localStorage.getItem(storageKey));
+  let migrationOwner = localStorage.getItem(LOCAL_MIGRATION_OWNER_KEY);
+  if (!migrationOwner) {
+    migrationOwner = user.id;
+    localStorage.setItem(LOCAL_MIGRATION_OWNER_KEY, user.id);
+  }
+  const canMigrateLocalState = migrationOwner === user.id;
+  const initialState = canMigrateLocalState
+    ? previousState
+    : buildEmptyState(user.email || "");
+  state = loadState(storageKey, initialState);
+  const cachedState = state;
+  const pendingAt = localStorage.getItem(cloudPendingStorageKey(user.id)) || "";
+  state.account = { email: user.email || "" };
+  renderAll();
+
+  try {
+    const { data, error } = await supabaseClient
+      .from(CLOUD_STATE_TABLE)
+      .select("state, updated_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (cloudUser?.id !== user.id) return false;
+
+    if (data?.state && Array.isArray(data.state.applications)) {
+      if (pendingAt && pendingAt > String(data.updated_at || "")) {
+        state = migrateState(cachedState);
+        state.account = { email: user.email || "" };
+        cloudSyncReady = true;
+        await uploadCloudState();
+      } else {
+        state = migrateState(data.state);
+        state.account = { email: user.email || "" };
+        localStorage.setItem(storageKey, JSON.stringify(state));
+        localStorage.removeItem(cloudPendingStorageKey(user.id));
+        cloudSyncReady = true;
+        setCloudStatus("synced");
+      }
+    } else {
+      state = migrateState(
+        hadCachedState && pendingAt
+          ? cachedState
+          : canMigrateLocalState
+            ? previousState
+            : buildEmptyState(user.email || ""),
+      );
+      state.account = { email: user.email || "" };
+      localStorage.setItem(storageKey, JSON.stringify(state));
+      cloudSyncReady = true;
+      await uploadCloudState();
+      if (!hadCachedState && canMigrateLocalState) {
+        await migrateLocalAssetsToCloud(state.applications);
+      }
+    }
+    renderAll();
+    return true;
+  } catch (error) {
+    console.error("Cloud state loading failed.", error);
+    if (cloudUser?.id !== user.id) return false;
+    cloudSyncReady = true;
+    setCloudStatus("error", error.message || "暂时无法读取云端数据");
+    renderAll();
+    return false;
+  }
+}
+
+async function handleCloudSession(session, eventName = "") {
+  const user = session?.user || null;
+  if (!user) {
+    const hadUser = Boolean(cloudUser);
+    cloudSessionLoadingId = "";
+    cloudUser = null;
+    cloudSyncReady = false;
+    window.clearTimeout(cloudSyncTimer);
+    setCloudStatus(supabaseClient ? "signed-out" : "local");
+    if (hadUser) {
+      state = loadState();
+      renderAll();
+    } else {
+      renderAccount();
+    }
+    return;
+  }
+  if (
+    cloudUser?.id === user.id &&
+    (cloudSyncReady || cloudSessionLoadingId === user.id)
+  ) {
+    return;
+  }
+  const previousState = state;
+  cloudUser = user;
+  cloudSessionLoadingId = user.id;
+  await loadCloudStateForUser(user, previousState);
+  if (cloudSessionLoadingId === user.id) cloudSessionLoadingId = "";
+  if (eventName === "SIGNED_IN") showToast("登录成功，已切换到你的云端数据");
+}
+
+function cloudRedirectUrl() {
+  const url = new URL(window.location.href);
+  url.hash = "";
+  url.search = "";
+  return url.href;
+}
+
+async function sendCloudLoginLink(email) {
+  if (!supabaseClient) {
+    showToast("请先完成 Supabase 云端配置");
+    return false;
+  }
+  setCloudStatus("sending");
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: cloudRedirectUrl(),
+      shouldCreateUser: true,
+    },
+  });
+  if (error) {
+    setCloudStatus("error", error.message);
+    showToast(error.message || "登录邮件发送失败");
+    return false;
+  }
+  setCloudStatus("email-sent", `登录链接已发送至 ${email}`);
+  showToast("登录链接已发送，请前往邮箱查收");
+  return true;
+}
+
+async function signOutCloudAccount() {
+  if (!supabaseClient || !cloudUser) return;
+  setCloudStatus("syncing", "正在退出");
+  if (cloudSyncReady && localStorage.getItem(cloudPendingStorageKey())) {
+    await uploadCloudState();
+  }
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    setCloudStatus("error", error.message);
+    showToast(error.message || "退出失败");
+    return;
+  }
+  closeDialog("accountDialog");
+  showToast("已退出登录，当前显示本地数据");
+}
+
+async function clearCurrentCloudWorkspace() {
+  if (!cloudUser || !cloudSyncReady) return;
+  const applicationIds = state.applications.map((application) => application.id);
+  setCloudStatus("syncing", "正在清空当前账户");
+  try {
+    await clearAssetDb(applicationIds);
+    state = buildEmptyState(cloudUser.email || "");
+    saveState();
+    await uploadCloudState();
+    closeConfirm();
+    closeDialog("dataDialog");
+    clearApplicationFilters();
+    switchView("dashboard");
+    renderAll();
+    showToast("当前邮箱的云端工作区已清空");
+  } catch (error) {
+    console.error("Cloud workspace clearing failed.", error);
+    setCloudStatus("error", error.message || "清空云端工作区失败");
+    closeConfirm();
+    showToast(error.message || "清空云端工作区失败");
+  }
+}
+
+async function initializeCloudSync() {
+  const config = getCloudConfig();
+  if (!config.configured || !window.supabase?.createClient) {
+    setCloudStatus("unconfigured");
+    return;
+  }
+  supabaseClient = window.supabase.createClient(config.url, config.key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+  supabaseClient.auth.onAuthStateChange((eventName, session) => {
+    window.setTimeout(() => handleCloudSession(session, eventName), 0);
+  });
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) {
+    setCloudStatus("error", error.message);
+    return;
+  }
+  await handleCloudSession(data.session, "INITIAL_SESSION");
+}
+
+function getPreferredTheme() {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function renderThemeToggle() {
+  const button = document.getElementById("themeToggle");
+  const icon = document.getElementById("themeToggleIcon");
+  if (!button || !icon) return;
+  const isDark = getPreferredTheme() === "dark";
+  const label = isDark ? "切换为浅色模式" : "切换为深色模式";
+  button.setAttribute("aria-checked", String(isDark));
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  icon.setAttribute("data-lucide", isDark ? "sun" : "moon");
+  refreshIcons();
+}
+
+function applyTheme() {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") {
+    document.documentElement.dataset.theme = stored;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  renderThemeToggle();
+}
+
+function toggleTheme() {
+  const nextTheme = getPreferredTheme() === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  applyTheme();
+}
+
+function openAssetDb() {
+  if (assetDbPromise) return assetDbPromise;
+  assetDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(ASSET_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(ASSET_STORE_NAME)) {
+        db.createObjectStore(ASSET_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return assetDbPromise;
+}
+
+async function getLocalJdImages(applicationId) {
+  if (!applicationId) return [];
+  const db = await openAssetDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ASSET_STORE_NAME, "readonly");
+    const request = transaction.objectStore(ASSET_STORE_NAME).get(applicationId);
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function putLocalJdImages(applicationId, images) {
+  if (!applicationId) return;
+  const db = await openAssetDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ASSET_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(ASSET_STORE_NAME);
+    if (images.length) store.put(images, applicationId);
+    else store.delete(applicationId);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function clearLocalAssetDb() {
+  const db = await openAssetDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ASSET_STORE_NAME, "readwrite");
+    transaction.objectStore(ASSET_STORE_NAME).clear();
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+function cloudAssetFolder(applicationId) {
+  return `${cloudUser.id}/${applicationId}`;
+}
+
+async function listCloudJdFiles(applicationId) {
+  if (!supabaseClient || !cloudUser || !applicationId) return [];
+  const folder = cloudAssetFolder(applicationId);
+  const { data, error } = await supabaseClient.storage
+    .from(CLOUD_ASSET_BUCKET)
+    .list(folder, { limit: 100, sortBy: { column: "created_at", order: "asc" } });
+  if (error) throw error;
+  return (data || [])
+    .filter((file) => file.name && file.name !== ".emptyFolderPlaceholder")
+    .map((file) => ({ ...file, path: `${folder}/${file.name}` }));
+}
+
+async function getCloudJdImages(applicationId) {
+  const files = await listCloudJdFiles(applicationId);
+  return Promise.all(
+    files.map(async (file) => {
+      const { data, error } = await supabaseClient.storage
+        .from(CLOUD_ASSET_BUCKET)
+        .createSignedUrl(file.path, 3600);
+      if (error) throw error;
+      const metadata = file.metadata || {};
+      return {
+        id: file.name.replace(/\.[^.]+$/, ""),
+        name: metadata.originalName || metadata.original_name || "JD 截图",
+        type: metadata.mimetype || "image/jpeg",
+        dataUrl: data.signedUrl,
+        remotePath: file.path,
+        createdAt: file.created_at || new Date().toISOString(),
+      };
+    }),
+  );
+}
+
+function imageExtension(type) {
+  if (type === "image/png") return "png";
+  if (type === "image/webp") return "webp";
+  return "jpg";
+}
+
+async function dataUrlToBlob(dataUrl) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) throw new Error("图片数据读取失败");
+  return response.blob();
+}
+
+async function putCloudJdImages(applicationId, images) {
+  const currentFiles = await listCloudJdFiles(applicationId);
+  const desiredIds = new Set(images.map((image) => image.id));
+  const removePaths = currentFiles
+    .filter((file) => !desiredIds.has(file.name.replace(/\.[^.]+$/, "")))
+    .map((file) => file.path);
+  if (removePaths.length) {
+    const { error } = await supabaseClient.storage
+      .from(CLOUD_ASSET_BUCKET)
+      .remove(removePaths);
+    if (error) throw error;
+  }
+
+  const currentIds = new Set(
+    currentFiles.map((file) => file.name.replace(/\.[^.]+$/, "")),
+  );
+  for (const image of images) {
+    if (image.remotePath || currentIds.has(image.id)) continue;
+    if (!String(image.dataUrl || "").startsWith("data:")) continue;
+    const extension = imageExtension(image.type);
+    const path = `${cloudAssetFolder(applicationId)}/${image.id}.${extension}`;
+    const blob = await dataUrlToBlob(image.dataUrl);
+    const { error } = await supabaseClient.storage
+      .from(CLOUD_ASSET_BUCKET)
+      .upload(path, blob, {
+        cacheControl: "3600",
+        contentType: image.type || blob.type || "image/jpeg",
+        upsert: true,
+        metadata: { originalName: image.name || "JD 截图" },
+      });
+    if (error) throw error;
+  }
+}
+
+async function deleteCloudJdImages(applicationId) {
+  const files = await listCloudJdFiles(applicationId);
+  if (!files.length) return;
+  const { error } = await supabaseClient.storage
+    .from(CLOUD_ASSET_BUCKET)
+    .remove(files.map((file) => file.path));
+  if (error) throw error;
+}
+
+async function migrateLocalAssetsToCloud(applications) {
+  if (!supabaseClient || !cloudUser) return;
+  const candidates = applications.filter((application) => application.jdCount > 0);
+  for (const application of candidates) {
+    const localImages = await getLocalJdImages(application.id).catch(() => []);
+    if (!localImages.length) continue;
+    try {
+      await putCloudJdImages(application.id, localImages);
+    } catch (error) {
+      console.error(`JD image migration failed for ${application.id}.`, error);
+      setCloudStatus("error", "部分 JD 图片迁移失败");
+    }
+  }
+}
+
+async function getJdImages(applicationId) {
+  if (cloudUser && cloudSyncReady) return getCloudJdImages(applicationId);
+  return getLocalJdImages(applicationId);
+}
+
+async function putJdImages(applicationId, images) {
+  if (cloudUser && cloudSyncReady) {
+    await putCloudJdImages(applicationId, images);
+    return;
+  }
+  await putLocalJdImages(applicationId, images);
+}
+
+async function deleteJdImages(applicationId) {
+  if (cloudUser && cloudSyncReady) {
+    await deleteCloudJdImages(applicationId);
+    return;
+  }
+  await putLocalJdImages(applicationId, []);
+}
+
+async function clearAssetDb(applicationIds = []) {
+  if (cloudUser && cloudSyncReady) {
+    for (const applicationId of applicationIds) {
+      await deleteCloudJdImages(applicationId);
+    }
+    return;
+  }
+  await clearLocalAssetDb();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function refreshIcons() {
+  if (window.lucide) {
+    window.lucide.createIcons({ attrs: { "aria-hidden": "true" } });
+  }
+}
+
+function formatDate(value, includeYear = false) {
+  if (!value) return "—";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: includeYear ? "numeric" : undefined,
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function toDateTimeInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function formatTimestamp(value) {
+  const date = new Date(value);
+  const diff = Date.now() - date.getTime();
+  if (diff < 60 * 60 * 1000) {
+    return `${Math.max(1, Math.floor(diff / 60000))} 分钟前`;
+  }
+  if (diff < 24 * 60 * 60 * 1000) {
+    return `${Math.floor(diff / 3600000)} 小时前`;
+  }
+  if (diff < 7 * 24 * 60 * 60 * 1000) {
+    return `${Math.floor(diff / 86400000)} 天前`;
+  }
+  return formatDate(String(value).slice(0, 10));
+}
+
+function dateDifference(value) {
+  if (!value) return 0;
+  const end = new Date(`${today()}T12:00:00`);
+  const start = new Date(`${value}T12:00:00`);
+  return Math.floor((end - start) / 86400000);
+}
+
+function formatReminderDate(value) {
+  if (!value) return "时间待补充";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function reminderDistance(value) {
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) return "";
+  const hours = Math.ceil((target.getTime() - Date.now()) / 3600000);
+  if (hours < -24) return `逾期 ${Math.ceil(Math.abs(hours) / 24)} 天`;
+  if (hours < 0) return "已到时间";
+  if (hours <= 24) return hours <= 1 ? "1 小时内" : `${hours} 小时后`;
+  return `${Math.ceil(hours / 24)} 天后`;
+}
+
+function reminderTarget(application, progress) {
+  if (progress.scheduledAt) return progress.scheduledAt;
+  if (!application.nextActionDate) return "";
+  const time = progress.stage === "assessment" ? "23:59" : "14:00";
+  return `${application.nextActionDate}T${time}`;
+}
+
+function getActionReminders() {
+  const reminders = [];
+  state.applications.forEach((application) => {
+    const progressItems = getProgress(application);
+    const latest = progressItems[progressItems.length - 1];
+    if (latest && ["assessment", "first", "second", "final"].includes(latest.stage)) {
+      const target = reminderTarget(application, latest);
+      const targetTime = new Date(target).getTime();
+      const daysUntil = (targetTime - Date.now()) / 86400000;
+      const interviewEnded = INTERVIEW_STAGES.has(latest.stage)
+        ? new Date(latest.endedAt || targetTime + 2 * 3600000).getTime() <= Date.now()
+        : false;
+      if (
+        target &&
+        Number.isFinite(targetTime) &&
+        daysUntil <= 3 &&
+        !interviewEnded
+      ) {
+        reminders.push({
+          id: `schedule-${latest.id}`,
+          type: latest.stage === "assessment" ? "assessment" : "interview",
+          title: latest.stage === "assessment" ? "测评安排" : `${getStatus(latest.stage).label}安排`,
+          application,
+          progress: latest,
+          dueAt: target,
+          createdAt: latest.recordedAt,
+        });
+      }
+    }
+
+    progressItems
+      .filter((progress) => INTERVIEW_STAGES.has(progress.stage) && !progress.review)
+      .forEach((progress) => {
+        let inferredEnd = progress.endedAt;
+        if (!inferredEnd) {
+          const scheduledAt =
+            progress.scheduledAt ||
+            (progress.id === latest?.id ? reminderTarget(application, progress) : "");
+          if (scheduledAt) {
+            const inferredDate = new Date(scheduledAt);
+            inferredDate.setHours(inferredDate.getHours() + 2);
+            inferredEnd = inferredDate.toISOString();
+          } else if (progress.eventDate < today()) {
+            inferredEnd = `${progress.eventDate}T18:00`;
+          }
+        }
+        const endedAt = new Date(inferredEnd).getTime();
+        if (!inferredEnd || !Number.isFinite(endedAt) || endedAt > Date.now()) return;
+        reminders.push({
+          id: `review-${progress.id}`,
+          type: "review",
+          title: `${getStatus(progress.stage).label}复盘`,
+          application,
+          progress,
+          dueAt: inferredEnd,
+          createdAt: progress.endedAt || progress.recordedAt,
+        });
+      });
+  });
+  return reminders;
+}
+
+function reminderTheme(type) {
+  return {
+    assessment: { label: "测评", icon: "file-check-2", color: "#7950A6", soft: "#F2EBF8" },
+    interview: { label: "面试", icon: "messages-square", color: "#E5940C", soft: "#FFF4DC" },
+    review: { label: "复盘待办", icon: "clipboard-pen-line", color: "#2D5BFF", soft: "#EDF1FF" },
+  }[type];
+}
+
+function getStatus(value) {
+  return STATUS_MAP[normalizeStatus(value)] || STATUS_MAP.other;
+}
+
+function statusOptions(selected = "") {
+  return STATUS.map(
+    (item) =>
+      `<option value="${item.value}" ${selected === item.value ? "selected" : ""}>${item.label}</option>`,
+  ).join("");
+}
+
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("is-visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2400);
+}
+
+function readImageAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith("image/")) {
+      reject(new Error("请选择图片格式的邮件截图"));
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      reject(new Error("截图不能超过 15MB"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("截图读取失败"));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderQuickCaptureImage() {
+  const preview = document.getElementById("quickImagePreview");
+  if (!quickCaptureImage) {
+    preview.hidden = true;
+    preview.classList.remove("is-processing", "has-error");
+    return;
+  }
+  preview.hidden = false;
+  preview.classList.toggle("is-processing", quickOcrBusy);
+  preview.classList.toggle("has-error", quickCaptureImage.status === "error");
+  document.getElementById("quickImageThumbnail").src = quickCaptureImage.dataUrl;
+  document.getElementById("quickImageName").textContent = quickCaptureImage.name;
+  document.getElementById("quickImageStatus").textContent = quickCaptureImage.message;
+  document.getElementById("quickImageProgressBar").style.width =
+    `${Math.round((quickCaptureImage.progress || 0) * 100)}%`;
+  document.getElementById("quickImageRemoveButton").disabled = quickOcrBusy;
+  document.getElementById("quickImageButton").disabled = quickOcrBusy;
+}
+
+function clearQuickCaptureImage() {
+  if (quickOcrBusy) return;
+  quickCaptureImage = null;
+  document.getElementById("quickImageInput").value = "";
+  renderQuickCaptureImage();
+}
+
+function normalizeOcrText(value) {
+  return String(value || "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function updateOcrProgress(message) {
+  if (!quickCaptureImage) return;
+  const statusLabels = {
+    "loading tesseract core": "正在加载识别引擎",
+    "initializing tesseract": "正在初始化识别引擎",
+    "loading language traineddata": "正在加载中英文模型",
+    "initializing api": "正在准备识别",
+    "recognizing text": "正在识别邮件内容",
+  };
+  quickCaptureImage.progress = Number(message.progress) || 0;
+  const label = statusLabels[message.status] || "正在处理截图";
+  quickCaptureImage.message =
+    message.status === "recognizing text"
+      ? `${label} ${Math.round(quickCaptureImage.progress * 100)}%`
+      : label;
+  renderQuickCaptureImage();
+}
+
+async function recognizeQuickCaptureImage(file) {
+  if (quickOcrBusy) {
+    showToast("当前截图仍在识别中");
+    return;
+  }
+  try {
+    const dataUrl = await readImageAsDataUrl(file);
+    quickCaptureImage = {
+      name: file.name || `面试邮件_${Date.now()}.png`,
+      dataUrl,
+      progress: 0,
+      status: "processing",
+      message: "正在准备识别",
+      text: "",
+    };
+    quickOcrBusy = true;
+    renderQuickCaptureImage();
+    if (!window.Tesseract) {
+      throw new Error("图片识别组件加载失败，请检查网络后重试");
+    }
+    const result = await window.Tesseract.recognize(dataUrl, "chi_sim", {
+      langPath:
+        "https://cdn.jsdelivr.net/npm/@tesseract.js-data/chi_sim@1.0.0/4.0.0_best_int",
+      logger: updateOcrProgress,
+    });
+    const text = normalizeOcrText(result?.data?.text);
+    if (text.replace(/\s/g, "").length < 4) {
+      throw new Error("没有识别到足够文字，请换用更清晰的截图");
+    }
+    quickCaptureImage.text = text;
+    quickCaptureImage.progress = 1;
+    quickCaptureImage.status = "complete";
+    quickCaptureImage.message = `已提取 ${text.replace(/\s/g, "").length} 个字符`;
+    document.getElementById("quickCaptureInput").value = text
+      .replace(/\s*\n+\s*/g, "；")
+      .slice(0, 300);
+    renderQuickCaptureImage();
+    openCapturePreview(text, {
+      source: "image",
+      sourceName: quickCaptureImage.name,
+    });
+  } catch (error) {
+    if (!quickCaptureImage) return;
+    quickCaptureImage.status = "error";
+    quickCaptureImage.message = error.message || "截图识别失败";
+    quickCaptureImage.progress = 0;
+    showToast(quickCaptureImage.message);
+  } finally {
+    quickOcrBusy = false;
+    renderQuickCaptureImage();
+  }
+}
+
+function openDialog(id) {
+  const dialog = document.getElementById(id);
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function closeDialog(id) {
+  const dialog = document.getElementById(id);
+  if (dialog && dialog.open) dialog.close();
+}
+
+function confirmAction(title, message, onAccept) {
+  document.getElementById("confirmTitle").textContent = title;
+  document.getElementById("confirmMessage").textContent = message;
+  document.getElementById("confirmPopover").hidden = false;
+  confirmCallback = onAccept;
+  setTimeout(() => document.getElementById("confirmCancelButton").focus(), 0);
+}
+
+function closeConfirm() {
+  document.getElementById("confirmPopover").hidden = true;
+  confirmCallback = null;
+}
+
+function renderAccount() {
+  const configured = getCloudConfig().configured && Boolean(window.supabase?.createClient);
+  const email = cloudUser?.email || "";
+  const name = email ? email.split("@")[0] : "本地访客";
+  const avatar = email ? name.slice(0, 1).toUpperCase() : "访";
+  const statusLabels = {
+    loading: "正在读取云端",
+    pending: "等待同步",
+    syncing: "正在同步",
+    synced: "已同步",
+    error: "同步异常",
+    sending: "正在发送",
+    "email-sent": "邮件已发送",
+    "signed-out": "未登录",
+    unconfigured: "未配置",
+    local: "本地模式",
+  };
+  const summaryIcon = document.getElementById("accountSummaryIcon");
+  const summaryTitle = document.getElementById("accountSummaryTitle");
+  const summaryDescription = document.getElementById("accountSummaryDescription");
+  const syncStatus = document.getElementById("accountSyncStatus");
+  const emailField = document.getElementById("accountEmailField");
+  const emailInput = document.getElementById("accountEmailInput");
+  const submitButton = document.getElementById("accountSubmitButton");
+  const signOutButton = document.getElementById("clearAccountButton");
+
+  document.getElementById("accountName").textContent = name;
+  document.getElementById("accountState").textContent = email
+    ? cloudStatus === "error"
+      ? "云同步异常"
+      : statusLabels[cloudStatus] || "云端账户"
+    : configured
+      ? "登录后云端同步"
+      : "数据保存在此设备";
+  document.getElementById("accountAvatar").textContent = avatar;
+  document.getElementById("mobileAccountAvatar").textContent = avatar;
+
+  emailField.hidden = Boolean(email);
+  submitButton.hidden = Boolean(email);
+  submitButton.disabled =
+    !configured || ["sending", "loading", "syncing"].includes(cloudStatus);
+  signOutButton.hidden = !email;
+  if (email) {
+    emailInput.value = email;
+  } else if (!emailInput.value && state.account?.email) {
+    emailInput.value = state.account.email;
+  }
+
+  if (email) {
+    summaryIcon.setAttribute(
+      "data-lucide",
+      cloudStatus === "error" ? "cloud-alert" : "cloud-check",
+    );
+    summaryTitle.textContent = email;
+    summaryDescription.textContent =
+      cloudStatusMessage ||
+      (cloudStatus === "synced"
+        ? "此账户的数据已保存在云端，可在其他设备登录查看。"
+        : "本地修改会自动同步至当前账户。");
+  } else if (configured) {
+    summaryIcon.setAttribute("data-lucide", "cloud");
+    summaryTitle.textContent =
+      cloudStatus === "email-sent" ? "登录邮件已发送" : "使用邮箱登录";
+    summaryDescription.textContent =
+      cloudStatusMessage || "我们会发送免密码登录链接，点击后即可进入你的云端工作区。";
+  } else {
+    summaryIcon.setAttribute("data-lucide", "cloud-off");
+    summaryTitle.textContent = "云同步尚未配置";
+    summaryDescription.textContent =
+      "完成 supabase-config.js 和数据库初始化后，即可使用邮箱登录。";
+  }
+
+  syncStatus.textContent = statusLabels[cloudStatus] || "本地模式";
+  syncStatus.className = `sync-status is-${cloudStatus}`;
+  refreshIcons();
+}
+
+function switchView(view, options = {}) {
+  if (!VIEW_META[view]) return;
+  currentView = view;
+  if (window.location.hash !== `#${view}`) {
+    window.history.replaceState(null, "", `#${view}`);
+  }
+  document.querySelectorAll(".view").forEach((element) => {
+    element.classList.toggle("is-active", element.id === `view-${view}`);
+  });
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.view === view);
+  });
+  document.getElementById("pageEyebrow").textContent = VIEW_META[view].eyebrow;
+  document.getElementById("pageTitle").textContent = VIEW_META[view].title;
+
+  if (view === "applications") {
+    if (options.filter) {
+      specialFilter = options.filter;
+      document.getElementById("statusFilter").value =
+        STATUS_MAP[options.filter] ? options.filter : "";
+    }
+    renderApplications();
+  } else if (view === "companies") {
+    renderCompanies();
+  } else if (view === "funnel") {
+    renderFunnel();
+  } else {
+    renderDashboard();
+  }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderNavigation() {
+  document.getElementById("applicationNavCount").textContent = state.applications.length;
+}
+
+function getOverdueApplications() {
+  const terminal = new Set(["offer", "rejected"]);
+  return state.applications
+    .filter(
+      (item) =>
+        item.nextActionDate &&
+        item.nextActionDate <= today() &&
+        !terminal.has(item.status),
+    )
+    .sort((a, b) => a.nextActionDate.localeCompare(b.nextActionDate));
+}
+
+function allProgressEvents() {
+  return state.applications
+    .flatMap((application) =>
+      getProgress(application).map((progress) => ({ application, progress })),
+    )
+    .sort((a, b) =>
+      String(b.progress.recordedAt).localeCompare(String(a.progress.recordedAt)),
+    );
+}
+
+function startOfCalendarWeek(offset = 0) {
+  const date = new Date();
+  const weekday = date.getDay() || 7;
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - weekday + 1 + offset * 7);
+  return date;
+}
+
+function addCalendarDays(date, days) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function formatClock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function getCalendarScheduleEvents() {
+  return state.applications.flatMap((application) =>
+    getProgress(application)
+      .filter(
+        (progress) =>
+          (progress.stage === "assessment" || INTERVIEW_STAGES.has(progress.stage)) &&
+          progress.scheduledAt,
+      )
+      .map((progress) => {
+        const start = new Date(progress.scheduledAt);
+        const explicitEnd = new Date(progress.endedAt);
+        const isAssessment = progress.stage === "assessment";
+        const end =
+          !Number.isNaN(explicitEnd.getTime()) && explicitEnd > start
+            ? explicitEnd
+            : new Date(start.getTime() + (isAssessment ? 0 : 3600000));
+        return {
+          application,
+          progress,
+          start,
+          end,
+          isAssessment,
+          conflict: false,
+        };
+      })
+      .filter((item) => !Number.isNaN(item.start.getTime())),
+  );
+}
+
+function getInterviewScheduleEvents() {
+  return getCalendarScheduleEvents().filter((event) =>
+    INTERVIEW_STAGES.has(event.progress.stage),
+  );
+}
+
+function markCalendarAttention(events) {
+  const sorted = [...events].sort((a, b) => a.start - b.start || a.end - b.end);
+  sorted.forEach((event) => {
+    event.conflict = false;
+  });
+  for (let index = 0; index < sorted.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < sorted.length; otherIndex += 1) {
+      const current = sorted[index];
+      const other = sorted[otherIndex];
+      const gap = other.start.getTime() - current.end.getTime();
+      if (gap > 30 * 60000) break;
+      if (gap <= 30 * 60000) {
+        current.conflict = true;
+        other.conflict = true;
+      }
+    }
+  }
+  return sorted;
+}
+
+function formatCalendarEventTime(event) {
+  if (event.isAssessment) return `截止 ${formatClock(event.start)}`;
+  return `${formatClock(event.start)}-${formatClock(event.end)}`;
+}
+
+function renderInterviewCalendar() {
+  const weekStart = startOfCalendarWeek(calendarWeekOffset);
+  const weekEnd = addCalendarDays(weekStart, 7);
+  const days = Array.from({ length: 7 }, (_, index) => addCalendarDays(weekStart, index));
+  const events = getCalendarScheduleEvents().filter(
+    (item) => item.start >= weekStart && item.start < weekEnd,
+  );
+  const eventsByDate = new Map(days.map((date) => [toLocalDateValue(date), []]));
+  events.forEach((event) => {
+    const dateKey = toLocalDateValue(event.start);
+    if (eventsByDate.has(dateKey)) eventsByDate.get(dateKey).push(event);
+  });
+  eventsByDate.forEach((items, key) => {
+    eventsByDate.set(key, markCalendarAttention(items));
+  });
+
+  const conflictCount = events.filter((event) => event.conflict).length;
+  const conflictBadge = document.getElementById("calendarConflictCount");
+  conflictBadge.textContent = conflictCount
+    ? `${conflictCount} 个安排需留意`
+    : "本周无时间冲突";
+  conflictBadge.classList.toggle("has-conflict", conflictCount > 0);
+  document.getElementById("calendarWeekLabel").textContent =
+    `${formatDate(toLocalDateValue(weekStart), true)} - ${formatDate(toLocalDateValue(addCalendarDays(weekEnd, -1)), true)}`;
+
+  const weekdayFormatter = new Intl.DateTimeFormat("zh-CN", { weekday: "short" });
+  const dayFormatter = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" });
+  const renderPeriod = (period, label) => `
+    <div class="calendar-period-label">${label}</div>
+    ${days
+      .map((date) => {
+        const dateKey = toLocalDateValue(date);
+        const dayEvents = (eventsByDate.get(dateKey) || []).filter((event) =>
+          period === "morning"
+            ? event.start.getHours() < 12
+            : event.start.getHours() >= 12,
+        );
+        return `
+          <div class="calendar-period-cell ${dateKey === today() ? "is-today" : ""}">
+            ${dayEvents
+              .map((event) => {
+                const status = getStatus(event.progress.stage);
+                const time = formatCalendarEventTime(event);
+                return `
+                  <button
+                    class="calendar-event ${event.conflict ? "has-conflict" : ""}"
+                    type="button"
+                    data-calendar-application="${event.application.id}"
+                    data-calendar-progress="${event.progress.id}"
+                    style="--event-color:${status.color}"
+                    title="${escapeHtml(time)} · ${escapeHtml(event.application.company)} · ${escapeHtml(event.application.role)} · ${status.label}"
+                  >
+                    <span class="calendar-event-primary">
+                      <time>${escapeHtml(time)}</time>
+                      <strong>${escapeHtml(event.application.company)}</strong>
+                    </span>
+                    <span class="calendar-event-secondary">
+                      <span>${escapeHtml(event.application.role)}</span>
+                      <em>${status.label}</em>
+                    </span>
+                  </button>
+                `;
+              })
+              .join("")}
+          </div>
+        `;
+      })
+      .join("")}
+  `;
+
+  document.getElementById("interviewCalendar").innerHTML = `
+    <div class="calendar-days-header">
+      <span class="calendar-corner"></span>
+      ${days
+        .map((date) => {
+          const dateKey = toLocalDateValue(date);
+          return `
+            <span class="calendar-day-heading ${dateKey === today() ? "is-today" : ""}">
+              <small>${weekdayFormatter.format(date)}</small>
+              <strong>${dayFormatter.format(date)}</strong>
+            </span>
+          `;
+        })
+        .join("")}
+    </div>
+    <div class="calendar-period-grid">
+      ${renderPeriod("morning", "上午")}
+      ${renderPeriod("afternoon", "下午")}
+      ${events.length ? "" : '<div class="calendar-empty">本周暂无面试或测评安排</div>'}
+    </div>
+  `;
+  renderNotificationToggle();
+  refreshIcons();
+}
+
+function renderNotificationToggle() {
+  const button = document.getElementById("notificationToggle");
+  if (!button) return;
+  const supported = "Notification" in window;
+  const enabled =
+    supported &&
+    state.settings.interviewNotifications &&
+    window.Notification.permission === "granted";
+  button.disabled = !supported;
+  button.classList.toggle("is-active", enabled);
+  button.setAttribute("aria-checked", String(enabled));
+  button.title = supported
+    ? enabled
+      ? "关闭面试前 1 小时提醒"
+      : "开启面试前 1 小时提醒"
+    : "当前浏览器不支持系统通知";
+}
+
+async function toggleInterviewNotifications() {
+  if (!("Notification" in window)) {
+    showToast("当前浏览器不支持系统通知");
+    return;
+  }
+  if (
+    state.settings.interviewNotifications &&
+    window.Notification.permission === "granted"
+  ) {
+    state.settings.interviewNotifications = false;
+    saveState();
+    renderNotificationToggle();
+    showToast("面试通知已关闭");
+    return;
+  }
+  let permission = window.Notification.permission;
+  if (permission === "default") {
+    permission = await window.Notification.requestPermission();
+  }
+  if (permission !== "granted") {
+    state.settings.interviewNotifications = false;
+    saveState();
+    renderNotificationToggle();
+    showToast("需要在浏览器设置中允许通知");
+    return;
+  }
+  state.settings.interviewNotifications = true;
+  saveState();
+  renderNotificationToggle();
+  checkInterviewNotifications();
+  showToast("已开启面试前 1 小时提醒");
+}
+
+function checkInterviewNotifications() {
+  if (
+    !("Notification" in window) ||
+    window.Notification.permission !== "granted" ||
+    !state.settings.interviewNotifications
+  ) {
+    return;
+  }
+  const history = new Set(state.settings.notificationHistory || []);
+  let didNotify = false;
+  getInterviewScheduleEvents().forEach((event) => {
+    const millisecondsUntilStart = event.start.getTime() - Date.now();
+    if (millisecondsUntilStart <= 0 || millisecondsUntilStart > 3600000) return;
+    const key = `${event.application.id}:${event.progress.id}:${event.progress.scheduledAt}`;
+    if (history.has(key)) return;
+    const notification = new window.Notification(
+      `${event.application.company} · ${getStatus(event.progress.stage).label}`,
+      {
+        body: `面试将于 ${formatClock(event.start)} 开始 · ${event.application.role}`,
+        tag: key,
+      },
+    );
+    notification.onclick = () => {
+      window.focus();
+      editingApplicationId = event.application.id;
+      openProgressDialog(event.progress.id);
+      notification.close();
+    };
+    history.add(key);
+    didNotify = true;
+  });
+  if (didNotify) {
+    state.settings.notificationHistory = [...history].slice(-100);
+    saveState();
+  }
+}
+
+function renderDashboard() {
+  const count = (stages) =>
+    state.applications.filter((item) => stages.includes(item.status)).length;
+  const active = count(["applied", "assessment", "first", "second", "final"]);
+  const reminders = getActionReminders();
+  const scheduleCount = reminders.filter((item) =>
+    ["assessment", "interview"].includes(item.type),
+  ).length;
+  const reviewCount = reminders.filter((item) => item.type === "review").length;
+
+  document.getElementById("todayLabel").textContent = new Intl.DateTimeFormat("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  }).format(new Date());
+  document.getElementById("progressSummary").textContent =
+    `${state.applications.length} 个岗位，${active} 个流程推进中`;
+
+  const statItems = [
+    {
+      label: "岗位总数",
+      value: state.applications.length,
+      note: "全部求职岗位",
+      color: "#6B7280",
+      icon: "layers-3",
+      filter: "",
+    },
+    {
+      label: "面试中",
+      value: count(["first", "second", "final"]),
+      note: "一面至终面",
+      color: STATUS_MAP.first.color,
+      icon: STATUS_MAP.first.icon,
+      filter: "interview",
+    },
+    {
+      label: "三天内安排",
+      value: scheduleCount,
+      note: "测评与面试提醒",
+      color: STATUS_MAP.assessment.color,
+      icon: "calendar-clock",
+      filter: "",
+    },
+    {
+      label: "待复盘",
+      value: reviewCount,
+      note: "面试评价未记录",
+      color: STATUS_MAP.applied.color,
+      icon: "clipboard-pen-line",
+      filter: "",
+    },
+  ];
+
+  document.getElementById("statsGrid").innerHTML = statItems
+    .map(
+      (item) => `
+        <button class="stat-card" type="button" data-stat-filter="${item.filter}" style="--stat-color:${item.color}">
+          <span class="stat-top"><span>${item.label}</span><i data-lucide="${item.icon}"></i></span>
+          <strong class="stat-value">${item.value}</strong>
+          <span class="stat-note">${item.note}</span>
+        </button>
+      `,
+    )
+    .join("");
+
+  const sort = document.getElementById("reminderSort").value;
+  const visibleReminders = reminders
+    .filter((item) => item.type === reminderFilter)
+    .sort((a, b) =>
+      sort === "due-asc"
+        ? String(a.dueAt).localeCompare(String(b.dueAt))
+        : String(b.createdAt).localeCompare(String(a.createdAt)),
+    );
+  document.getElementById("actionReminderCount").textContent = `${reminders.length} 项提醒`;
+  document.getElementById("actionReminderList").innerHTML = visibleReminders.length
+    ? visibleReminders
+        .map((item) => {
+          const theme = reminderTheme(item.type);
+          return `
+            <button
+              class="action-reminder-item"
+              type="button"
+              data-reminder-application="${item.application.id}"
+              data-reminder-progress="${item.progress.id}"
+              data-reminder-type="${item.type}"
+              style="--reminder-color:${theme.color};--reminder-soft:${theme.soft}"
+            >
+              <span class="action-reminder-icon"><i data-lucide="${theme.icon}"></i></span>
+              <span class="action-reminder-copy">
+                <span class="action-reminder-title">
+                  <strong>${escapeHtml(item.application.company)} · ${escapeHtml(item.title)}</strong>
+                  <em>${theme.label}</em>
+                </span>
+                <span>${escapeHtml(item.application.department || "部门待补充")} · ${escapeHtml(item.application.role)}</span>
+                <small>${item.type === "review" ? "面试已结束，请补充面试评价" : "进入时间前 3 天开始提醒"}</small>
+              </span>
+              <time>
+                <span>${formatReminderDate(item.dueAt)}</span>
+                <em>${reminderDistance(item.dueAt)}</em>
+              </time>
+              <i data-lucide="chevron-right"></i>
+            </button>
+          `;
+        })
+        .join("")
+    : `
+      <div class="empty-inline action-empty">
+        <i data-lucide="circle-check-big"></i>
+        <span>当前没有这类提醒</span>
+      </div>
+    `;
+
+  renderInterviewCalendar();
+  refreshIcons();
+}
+
+function renderIndustryDistribution() {
+  const industryCounts = state.applications.reduce((result, item) => {
+    result[item.industry] = (result[item.industry] || 0) + 1;
+    return result;
+  }, {});
+  const industries = Object.entries(industryCounts).sort((a, b) => b[1] - a[1]);
+  const maxIndustry = Math.max(1, ...industries.map((item) => item[1]));
+  const colors = ["#0EA672", "#2D5BFF", "#E5940C", "#7950A6", "#DC3545", "#6B7280"];
+  document.getElementById("funnelIndustryDistribution").innerHTML = industries.length
+    ? industries
+        .slice(0, 8)
+        .map(
+          ([name, value], index) => `
+            <div class="distribution-row">
+              <span class="distribution-label">${escapeHtml(name)}</span>
+              <div class="track">
+                <div class="track-fill" style="width:${Math.max(3, Math.round((value / maxIndustry) * 100))}%;--bar-color:${colors[index % colors.length]}"></div>
+              </div>
+              <strong class="distribution-count">${value}</strong>
+            </div>
+          `,
+        )
+        .join("")
+    : '<div class="empty-inline">新增投递后显示行业分布</div>';
+}
+
+function renderFunnel() {
+  const currentCounts = Object.fromEntries(
+    FUNNEL_STAGES.map((stage) => [
+      stage,
+      state.applications.filter((item) => item.status === stage).length,
+    ]),
+  );
+  const reachedCounts = Object.fromEntries(
+    FUNNEL_STAGES.map((stage, stageIndex) => [
+      stage,
+      state.applications.filter((item) => {
+        const highestReached = Math.max(
+          -1,
+          ...getProgress(item).map((progress) => FUNNEL_STAGES.indexOf(progress.stage)),
+        );
+        return highestReached >= stageIndex;
+      }).length,
+    ]),
+  );
+  const maxReached = Math.max(1, ...Object.values(reachedCounts));
+  const submitted = reachedCounts.applied || 0;
+  const interviewCount = state.applications.filter((item) =>
+    INTERVIEW_STAGES.has(item.status),
+  ).length;
+  const offerRate = submitted
+    ? Math.round(((reachedCounts.offer || 0) / submitted) * 100)
+    : 0;
+
+  document.getElementById("funnelSummary").innerHTML = `
+    <div><span>有效投递</span><strong>${submitted}</strong></div>
+    <div><span>面试中</span><strong>${interviewCount}</strong></div>
+    <div><span>Offer 转化率</span><strong>${offerRate}%</strong></div>
+  `;
+  document.getElementById("pipelineFunnel").innerHTML = FUNNEL_STAGES.map(
+    (stage, index) => {
+      const info = getStatus(stage);
+      const current = currentCounts[stage];
+      const reached = reachedCounts[stage];
+      const previous = index > 0 ? reachedCounts[FUNNEL_STAGES[index - 1]] : 0;
+      const conversion =
+        index === 0 ? "—" : previous ? `${Math.round((reached / previous) * 100)}%` : "—";
+      const width = Math.max(2, Math.round((reached / maxReached) * 100));
+      return `
+        <button
+          class="pipeline-funnel-row"
+          type="button"
+          data-funnel-filter="${stage}"
+          style="--stage-color:${info.color};--stage-width:${width}%"
+          aria-label="${info.label}，当前 ${current}，累计 ${reached}，转化率 ${conversion}"
+        >
+          <span>${info.label}</span>
+          <span class="pipeline-track"><span></span></span>
+          <strong>${current} / ${reached}</strong>
+          <em>${conversion}</em>
+        </button>
+      `;
+    },
+  ).join("");
+  renderIndustryDistribution();
+  refreshIcons();
+}
+
+function initializeSelects() {
+  document.getElementById("statusFilter").innerHTML =
+    '<option value="">全部进展</option>' +
+    '<option value="interview">面试中（一面至终面）</option>' +
+    statusOptions();
+  document.getElementById("industryFilter").innerHTML =
+    '<option value="">全部行业</option>' +
+    INDUSTRIES.map((item) => `<option value="${item}">${item}</option>`).join("");
+  ["statusInput", "captureStageInput", "progressStageInput"].forEach((id) => {
+    document.getElementById(id).innerHTML = statusOptions("applied");
+  });
+  document.getElementById("industryInput").innerHTML = INDUSTRIES.map(
+    (item) => `<option value="${item}">${item}</option>`,
+  ).join("");
+  ["channelInput", "captureChannelInput"].forEach((id) => {
+    document.getElementById(id).innerHTML = CHANNELS.map(
+      (item) => `<option value="${item}">${item}</option>`,
+    ).join("");
+  });
+}
+
+function statusMatchesFilter(application, filter) {
+  if (!filter) return true;
+  if (filter === "interview") return ["first", "second", "final"].includes(application.status);
+  return application.status === filter;
+}
+
+function renderApplications() {
+  const search = document.getElementById("applicationSearch").value.trim().toLowerCase();
+  const status = document.getElementById("statusFilter").value;
+  const industry = document.getElementById("industryFilter").value;
+  const overdueIds = new Set(getOverdueApplications().map((item) => item.id));
+
+  const rows = [...state.applications]
+    .filter((item) => {
+      if (specialFilter === "overdue" && !overdueIds.has(item.id)) return false;
+      if (specialFilter === "interview" && !["first", "second", "final"].includes(item.status)) {
+        return false;
+      }
+      if (!statusMatchesFilter(item, status)) return false;
+      if (industry && item.industry !== industry) return false;
+      if (search) {
+        const progressText = getProgress(item).map((entry) => entry.note).join(" ");
+        const haystack =
+          `${item.company} ${item.department} ${item.role} ${item.city} ${item.notes} ${item.channel} ${progressText}`.toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const filterNotes = [];
+  if (specialFilter === "overdue") filterNotes.push("仅显示待跟进记录");
+  if (specialFilter === "interview") filterNotes.push("仅显示面试中的岗位");
+  if (status) {
+    filterNotes.push(
+      status === "interview" ? "进展：面试中" : `进展：${getStatus(status).label}`,
+    );
+  }
+  if (industry) filterNotes.push(`行业：${industry}`);
+  if (search) filterNotes.push(`关键词：${search}`);
+  const activeFilter = document.getElementById("activeFilter");
+  activeFilter.hidden = filterNotes.length === 0;
+  document.getElementById("activeFilterText").textContent = filterNotes.join(" · ");
+
+  const remindersByApplication = new Map();
+  getActionReminders()
+    .sort((a, b) => String(a.dueAt).localeCompare(String(b.dueAt)))
+    .forEach((reminder) => {
+      if (!remindersByApplication.has(reminder.application.id)) {
+        remindersByApplication.set(reminder.application.id, reminder);
+      }
+    });
+  document.getElementById("applicationRows").innerHTML = rows
+    .map((item) => {
+      const latest = getLatestProgress(item);
+      const progressCount = getProgress(item).length;
+      const reminder = remindersByApplication.get(item.id);
+      const theme = reminder ? reminderTheme(reminder.type) : null;
+      return `
+        <article class="compact-application-record">
+          <div class="compact-application-line primary-line">
+            <strong class="compact-application-title">${escapeHtml(item.company)} · ${escapeHtml(item.role)}</strong>
+            <select class="status-select status-${item.status}" data-status-id="${item.id}" aria-label="更新 ${escapeHtml(item.company)} ${escapeHtml(item.role)} 的进展">
+              ${statusOptions(item.status)}
+            </select>
+          </div>
+          <div class="compact-application-line secondary-line">
+            <span class="compact-meta" title="${escapeHtml(item.department || "部门待补充")}"><i data-lucide="building-2"></i>${escapeHtml(item.department || "部门待补充")}</span>
+            <span class="compact-meta"><i data-lucide="route"></i>${escapeHtml(item.channel)}</span>
+            <span class="compact-meta"><i data-lucide="calendar-days"></i>${latest ? formatDate(latest.eventDate) : "—"}</span>
+            <span class="compact-meta ${reminder ? "has-reminder" : ""}" ${theme ? `style="--meta-color:${theme.color}"` : ""}>
+              <i data-lucide="${theme ? theme.icon : "bell-off"}"></i>
+              ${reminder ? `${theme.label} ${reminderDistance(reminder.dueAt)}` : "暂无提醒"}
+            </span>
+            <span class="compact-meta"><i data-lucide="list-tree"></i>${progressCount} 条</span>
+            <span class="compact-meta"><i data-lucide="image"></i>JD ${item.jdCount || 0} 张</span>
+            <button class="row-action" type="button" data-edit-id="${item.id}" aria-label="编辑 ${escapeHtml(item.company)}" title="编辑岗位档案">
+              <i data-lucide="pencil"></i>
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  document.getElementById("applicationEmpty").hidden = rows.length > 0;
+  refreshIcons();
+}
+
+function stageMeta(stage) {
+  return {
+    open: { label: "开放中", className: "stage-open" },
+    preheat: { label: "提前批", className: "stage-preheat" },
+    watch: { label: "持续关注", className: "stage-watch" },
+  }[stage] || { label: "持续关注", className: "stage-watch" };
+}
+
+function renderCompanies() {
+  const categories = ["全部", ...new Set(COMPANIES.map((item) => item.category))];
+  document.getElementById("companyFilters").innerHTML = categories
+    .map(
+      (category) => `
+        <button class="filter-chip ${companyCategory === category ? "is-active" : ""}" type="button" data-company-category="${category}">
+          ${escapeHtml(category)}
+        </button>
+      `,
+    )
+    .join("");
+
+  const search = document.getElementById("companySearch").value.trim().toLowerCase();
+  const addedCompanies = new Set(state.applications.map((item) => item.company));
+  const companies = COMPANIES.filter((company) => {
+    if (companyCategory !== "全部" && company.category !== companyCategory) return false;
+    if (search) {
+      const haystack =
+        `${company.name} ${company.category} ${company.direction} ${company.meta.join(" ")}`.toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+
+  document.getElementById("companyResultCount").textContent = `${companies.length} 家公司`;
+  document.getElementById("companyGrid").innerHTML = companies
+    .map((company) => {
+      const stage = stageMeta(company.stage);
+      const added = addedCompanies.has(company.name);
+      return `
+        <article class="company-card">
+          <div class="company-card-head">
+            <span class="company-logo" style="--logo-color:${company.color}">${escapeHtml(company.name.slice(0, 1))}</span>
+            <span class="company-name">
+              <strong>${escapeHtml(company.name)}</strong>
+              <span>${escapeHtml(company.category)}</span>
+            </span>
+            <span class="company-stage ${stage.className}">${stage.label}</span>
+          </div>
+          <p class="company-direction">${escapeHtml(company.direction)}</p>
+          <div class="company-meta">${company.meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+          <div class="company-actions">
+            <a class="button ghost" href="${company.url}" target="_blank" rel="noreferrer">
+              <i data-lucide="external-link"></i>官方入口
+            </a>
+            <button class="button ${added ? "is-added" : "primary"}" type="button" data-add-company="${escapeHtml(company.name)}" ${added ? "disabled" : ""}>
+              <i data-lucide="${added ? "check" : "plus"}"></i>
+              ${added ? "已在目标中" : "加入目标"}
+            </button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+  document.getElementById("companyEmpty").hidden = companies.length > 0;
+  refreshIcons();
+}
+
+function renderAll() {
+  renderNavigation();
+  renderAccount();
+  if (currentView === "dashboard") renderDashboard();
+  if (currentView === "funnel") renderFunnel();
+  if (currentView === "applications") renderApplications();
+  if (currentView === "companies") renderCompanies();
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s·•\-_/（）()【】[\]，,。.!！?？:：；;]/g, "");
+}
+
+function findCompany(text) {
+  const lowered = text.toLowerCase();
+  const candidates = COMPANIES.flatMap((company) => [
+    { company, token: company.name },
+    ...company.aliases.map((token) => ({ company, token })),
+  ]).sort((a, b) => b.token.length - a.token.length);
+  return (
+    candidates.find((item) => lowered.includes(item.token.toLowerCase())) || null
+  );
+}
+
+function parseEventDate(text) {
+  const now = new Date();
+  const makeLocalDate = (year, month, day) => {
+    const date = new Date(year, month - 1, day, 12);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      return "";
+    }
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  };
+
+  if (/前天/.test(text)) return dateOffset(-2);
+  if (/昨天|昨日/.test(text)) return dateOffset(-1);
+  if (/今天|今日|刚刚/.test(text)) return today();
+
+  let match = text.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})[日号]?/);
+  if (match) return makeLocalDate(Number(match[1]), Number(match[2]), Number(match[3]));
+
+  match = text.match(/(\d{1,2})月(\d{1,2})[日号]?/);
+  if (match) {
+    let year = now.getFullYear();
+    const candidate = new Date(year, Number(match[1]) - 1, Number(match[2]), 12);
+    if (candidate.getTime() - now.getTime() > 120 * 86400000) year -= 1;
+    return makeLocalDate(year, Number(match[1]), Number(match[2]));
+  }
+  return today();
+}
+
+function parseChineseNumber(value) {
+  const text = String(value || "").replace(/分$/, "");
+  if (/^\d+$/.test(text)) return Number(text);
+  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (text === "十") return 10;
+  if (text.includes("十")) {
+    const [tens, ones] = text.split("十");
+    return (tens ? digits[tens] : 1) * 10 + (ones ? digits[ones] : 0);
+  }
+  return digits[text];
+}
+
+function toLocalDateValue(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function makeLocalDateValue(year, month, day) {
+  const date = new Date(year, month - 1, day, 12);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return "";
+  }
+  return toLocalDateValue(date);
+}
+
+function parseScheduleDate(text) {
+  const now = new Date();
+  now.setHours(12, 0, 0, 0);
+  const addDays = (days, token) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() + days);
+    return { date: toLocalDateValue(date), token };
+  };
+
+  const durationDays = text.match(/([零〇一二两三四五六七八九十\d]{1,3})\s*天内/);
+  if (durationDays) {
+    const days = parseChineseNumber(durationDays[1]);
+    if (Number.isFinite(days)) return addDays(days, durationDays[0]);
+  }
+
+  const futureRelatives = [
+    [/大后天/, 3],
+    [/后天/, 2],
+    [/明天|明日/, 1],
+  ];
+  for (const [pattern, days] of futureRelatives) {
+    const match = text.match(pattern);
+    if (match) return addDays(days, match[0]);
+  }
+
+  const weekdayMap = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
+  const weekdayDate = (weekday, weekOffset, token, rollForward = false) => {
+    const currentWeekday = now.getDay() || 7;
+    const date = new Date(now);
+    date.setDate(
+      now.getDate() - (currentWeekday - 1) + weekOffset * 7 + (weekday - 1),
+    );
+    if (rollForward && date < now) date.setDate(date.getDate() + 7);
+    return { date: toLocalDateValue(date), token };
+  };
+
+  let match = text.match(/(?:下周|下星期)([一二三四五六日天])?/);
+  if (match) return weekdayDate(weekdayMap[match[1]] || 1, 1, match[0]);
+
+  match = text.match(/(?:本周|这周|本星期|这星期)([一二三四五六日天])/);
+  if (match) return weekdayDate(weekdayMap[match[1]], 0, match[0]);
+
+  match = text.match(/(?:周|星期|礼拜)([一二三四五六日天])/);
+  if (match) return weekdayDate(weekdayMap[match[1]], 0, match[0], true);
+
+  match = text.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})[日号]?/);
+  if (match) {
+    return {
+      date: makeLocalDateValue(Number(match[1]), Number(match[2]), Number(match[3])),
+      token: match[0],
+    };
+  }
+
+  match = text.match(/(\d{1,2})月(\d{1,2})[日号]?/);
+  if (match) {
+    let year = now.getFullYear();
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    const candidate = new Date(year, month - 1, day, 12);
+    if (candidate.getTime() - now.getTime() < -120 * 86400000) year += 1;
+    return { date: makeLocalDateValue(year, month, day), token: match[0] };
+  }
+
+  const currentAndPast = [
+    [/今天|今日|今晚/, 0],
+    [/昨天|昨日/, -1],
+    [/前天/, -2],
+  ];
+  for (const [pattern, days] of currentAndPast) {
+    const relativeMatch = text.match(pattern);
+    if (relativeMatch) return addDays(days, relativeMatch[0]);
+  }
+  return null;
+}
+
+function parseClockExpressions(text) {
+  const periodPattern = "凌晨|早上|上午|中午|下午|傍晚|晚上";
+  const clockPattern = new RegExp(
+    `(${periodPattern})?\\s*(?:(\\d{1,2})[:：](\\d{2})|([零〇一二两三四五六七八九十\\d]{1,3})[点时](半|[零〇一二两三四五六七八九十\\d]{1,3}分?)?)`,
+    "g",
+  );
+  const matches = [];
+  let match;
+  while ((match = clockPattern.exec(text))) {
+    const period = match[1] || "";
+    let hour = match[2] ? Number(match[2]) : parseChineseNumber(match[4]);
+    let minute = match[3]
+      ? Number(match[3])
+      : match[5] === "半"
+        ? 30
+        : parseChineseNumber(match[5] || "0");
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) continue;
+    if (period === "下午" || period === "傍晚" || period === "晚上") {
+      if (hour < 12) hour += 12;
+    } else if (period === "中午") {
+      if (hour < 11) hour += 12;
+    } else if (period === "凌晨" && hour === 12) {
+      hour = 0;
+    }
+    if (hour > 23 || minute > 59) continue;
+    matches.push({
+      raw: match[0],
+      index: match.index,
+      period,
+      hour,
+      minute,
+    });
+  }
+  return matches;
+}
+
+function dateTimeFromParts(date, hour, minute) {
+  if (!date) return "";
+  return `${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseScheduledProgress(text, stage) {
+  const scheduleCue =
+    /(?:面试时间|面试日期|面试安排|会议时间|笔试时间|测评时间|考试时间|日期及时间|date\s*(?:&|and)?\s*time|interview\s*(?:date|time)|meeting\s*time)/i;
+  const cueIndex = text.search(scheduleCue);
+  const scheduleText = cueIndex >= 0 ? text.slice(cueIndex, cueIndex + 260) : text;
+  const scheduleDate = parseScheduleDate(scheduleText) || parseScheduleDate(text);
+  let clockSource = scheduleText;
+  let clocks = parseClockExpressions(scheduleText);
+  if (!clocks.length && scheduleText !== text) {
+    clockSource = text;
+    clocks = parseClockExpressions(text);
+  }
+  const timedStage = stage === "assessment" || INTERVIEW_STAGES.has(stage);
+  const hasScheduleCue =
+    /(安排|约在|定在|将于|面试时间|面试日期|会议时间|测评截止|笔试截止|截止(?:到|于)?|完成时间|考试时间|开考|date\s*(?:&|and)?\s*time|interview\s*(?:date|time))/i.test(
+      scheduleText,
+    );
+  const hasFutureExpression =
+    /(明天|明日|后天|大后天|下周|下星期|本周|这周|周[一二三四五六日天]|星期[一二三四五六日天]|\d+\s*天内)/.test(
+      scheduleText,
+    );
+  const durationHours = scheduleText.match(
+    /([零〇一二两三四五六七八九十\d]{1,3})\s*小时内/,
+  );
+  const preparationOnly =
+    /(明天|明日|后天|大后天|下周(?:[一二三四五六日天])?|下星期(?:[一二三四五六日天])?|周[一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}月\d{1,2}[日号]?)\s*(准备|复习|整理|练习|完善|修改|补充)/.test(
+      scheduleText,
+    );
+
+  if (durationHours && (hasScheduleCue || timedStage)) {
+    const hours = parseChineseNumber(durationHours[1]);
+    if (Number.isFinite(hours)) {
+      const target = new Date(Date.now() + hours * 3600000);
+      return {
+        scheduledAt: toDateTimeInput(target.toISOString()),
+        endedAt: "",
+      };
+    }
+  }
+
+  if (preparationOnly && !hasScheduleCue && !clocks.length) {
+    return { scheduledAt: "", endedAt: "" };
+  }
+
+  const scheduleDateIsFuture = scheduleDate && scheduleDate.date > today();
+  const shouldParse =
+    (scheduleDate &&
+      (hasScheduleCue ||
+        hasFutureExpression ||
+        clocks.length ||
+        (timedStage && scheduleDateIsFuture))) ||
+    (clocks.length && (hasScheduleCue || timedStage));
+  if (!shouldParse) return { scheduledAt: "", endedAt: "" };
+
+  const date = scheduleDate ? scheduleDate.date : today();
+  const defaultHour = stage === "assessment" ? 23 : 10;
+  const defaultMinute = stage === "assessment" ? 59 : 0;
+  const first = clocks[0] || { hour: defaultHour, minute: defaultMinute, period: "" };
+  let scheduledAt = dateTimeFromParts(date, first.hour, first.minute);
+  let endedAt = "";
+
+  if (clocks.length > 1) {
+    const second = { ...clocks[1] };
+    const separator = clockSource.slice(
+      first.index + first.raw.length,
+      second.index,
+    );
+    if (/(?:到|至|[-—~～])/.test(separator)) {
+      if (
+        !second.period &&
+        ["下午", "傍晚", "晚上"].includes(first.period) &&
+        second.hour < 12
+      ) {
+        second.hour += 12;
+      }
+      endedAt = dateTimeFromParts(date, second.hour, second.minute);
+      if (new Date(endedAt) <= new Date(scheduledAt)) {
+        const nextDay = new Date(`${endedAt}:00`);
+        nextDay.setDate(nextDay.getDate() + 1);
+        endedAt = toDateTimeInput(nextDay.toISOString());
+      }
+    }
+  }
+  return { scheduledAt, endedAt };
+}
+
+function detectStage(text) {
+  const lowered = text.toLowerCase();
+  const rules = [
+    { stage: "offer", keywords: ["offer", "录用", "意向书", "oc"] },
+    { stage: "rejected", keywords: ["挂了", "被挂", "拒绝", "拒信", "未通过", "没过", "流程结束", "已结束"] },
+    { stage: "final", keywords: ["终面", "最终面", "最终轮面试", "hr面", "hr 面", "final round", "hr interview"] },
+    { stage: "second", keywords: ["二面", "第二轮面试", "二轮面试", "第2轮面试", "第二面", "second round", "round 2"] },
+    { stage: "first", keywords: ["一面", "初面", "第一轮面试", "首轮面试", "第1轮面试", "进面", "面试邀请", "面试", "interview invitation", "first round", "round 1", "interview"] },
+    { stage: "assessment", keywords: ["测评", "笔试", "在线测试"] },
+    { stage: "applied", keywords: ["已投递", "投递了", "投了", "网申", "提交简历", "完成投递"] },
+    { stage: "wish", keywords: ["想投", "关注", "收藏", "目标"] },
+  ];
+  for (const rule of rules) {
+    if (rule.keywords.some((keyword) => lowered.includes(keyword.toLowerCase()))) {
+      return rule.stage;
+    }
+  }
+  return "other";
+}
+
+function detectChannel(text) {
+  if (/(?:BOSS直聘|Boss直聘|Boss|BOSS)/i.test(text)) return "Boss";
+  if (/(?:内推|内推码|找人推)/.test(text)) return "内推";
+  if (/(?:线下|双选会|宣讲会|招聘会)/.test(text)) return "线下";
+  if (/(?:官网|网申|校招官网|官方招聘)/.test(text)) return "官网";
+  return "其他";
+}
+
+function cleanCapturedField(value, type = "generic") {
+  let result = String(value || "")
+    .split(/\n|\r|\||｜/)[0]
+    .replace(/^[\s:：\-—]+|[\s,，;；。]+$/g, "")
+    .replace(
+      /\s*(?:面试时间|面试日期|面试地点|会议链接|部门|事业群|应聘岗位|岗位名称|职位名称|position|interview).*/i,
+      "",
+    )
+    .trim();
+  if (type === "role") result = result.replace(/(?:岗位|职位|岗)$/g, "").trim();
+  return result.slice(0, type === "company" ? 40 : 30);
+}
+
+function extractLabeledField(text, labels, type = "generic") {
+  const match = text.match(
+    new RegExp(`(?:${labels})\\s*[:：]\\s*([^\\n\\r]{2,60})`, "i"),
+  );
+  return match ? cleanCapturedField(match[1], type) : "";
+}
+
+function inferCompanyFromText(text) {
+  const labeled = extractLabeledField(
+    text,
+    "公司(?:名称)?|企业(?:名称)?|company(?:\\s*name)?",
+    "company",
+  );
+  if (labeled) return labeled;
+  const invitation = text.match(
+    /([A-Za-z0-9\u4e00-\u9fa5·]{2,32}(?:有限责任公司|有限公司|集团|科技|网络|咨询|银行|汽车))(?=[^\n\r]{0,18}(?:面试|招聘|邀请))/,
+  );
+  return invitation ? cleanCapturedField(invitation[1], "company") : "";
+}
+
+function findMatchingApplications(company, department, role) {
+  const companyKey = normalizeText(company);
+  const departmentKey = normalizeText(department);
+  const roleKey = normalizeText(role);
+  return state.applications
+    .map((application) => {
+      let score = 0;
+      const appCompany = normalizeText(application.company);
+      const appDepartment = normalizeText(application.department);
+      const appRole = normalizeText(application.role);
+      if (companyKey && appCompany === companyKey) score += 8;
+      else if (companyKey && (appCompany.includes(companyKey) || companyKey.includes(appCompany))) {
+        score += 5;
+      }
+      if (roleKey && appRole === roleKey) score += 6;
+      else if (roleKey && (appRole.includes(roleKey) || roleKey.includes(appRole))) score += 3;
+      if (departmentKey && appDepartment === departmentKey) score += 3;
+      else if (
+        departmentKey &&
+        appDepartment &&
+        (appDepartment.includes(departmentKey) || departmentKey.includes(appDepartment))
+      ) {
+        score += 1;
+      }
+      return { application, score };
+    })
+    .filter((item) => item.score >= 5)
+    .sort((a, b) => b.score - a.score);
+}
+
+function parseQuickCapture(text) {
+  const raw = String(text || "").trim();
+  const companyHit = findCompany(raw);
+  let company = companyHit ? companyHit.company.name : inferCompanyFromText(raw);
+  const companyToken = companyHit ? companyHit.token : "";
+  const companyIndex = companyToken
+    ? raw.toLowerCase().indexOf(companyToken.toLowerCase())
+    : -1;
+  const afterCompany = companyIndex >= 0
+    ? raw.slice(companyIndex + companyToken.length)
+    : raw;
+
+  const labeledDepartment = extractLabeledField(
+    raw,
+    "应聘部门|面试部门|部门|事业群|business\\s*unit|department",
+  );
+  const departmentMatch = afterCompany.match(
+    /([A-Za-z0-9\u4e00-\u9fa5]{2,16}(?:事业群|事业部|部门|产品部|业务部|运营部|技术部|市场部|销售部|研发部|平台部|中心|团队|业务线|项目组|小组|BG|BU))/i,
+  );
+  let department = labeledDepartment || (departmentMatch ? departmentMatch[1] : "");
+  if (company && department.startsWith(company)) department = department.slice(company.length);
+  if (companyToken && department.startsWith(companyToken)) {
+    department = department.slice(companyToken.length);
+  }
+
+  const labeledRole = extractLabeledField(
+    raw,
+    "应聘岗位|面试岗位|应聘职位|岗位名称|职位名称|岗位|职位|job\\s*title|position",
+    "role",
+  );
+  const existingRole = company
+    ? state.applications
+        .filter((item) => normalizeText(item.company) === normalizeText(company))
+        .map((item) => item.role)
+        .sort((a, b) => b.length - a.length)
+        .find((role) => normalizeText(raw).includes(normalizeText(role)))
+    : "";
+  const keywordRole = ROLE_KEYWORDS.sort((a, b) => b.length - a.length).find((role) =>
+    normalizeText(raw).includes(normalizeText(role)),
+  );
+  let role = labeledRole || existingRole || keywordRole || "";
+  if (!role) {
+    let roleArea = afterCompany;
+    if (department) roleArea = roleArea.replace(department, "");
+    const roleMatch = roleArea.match(
+      /([A-Za-z0-9\u4e00-\u9fa5 +#/]{2,18}?)(?:岗位|岗)(?:已|进|收到|$|[，,。])/,
+    );
+    role = roleMatch ? roleMatch[1].trim() : "";
+  }
+
+  const stage = detectStage(raw);
+  const channel = detectChannel(raw);
+  const schedule = parseScheduledProgress(raw, stage);
+  let eventDate = parseEventDate(raw);
+  if (
+    schedule.scheduledAt &&
+    schedule.scheduledAt.slice(0, 10) > today() &&
+    !/(昨天|昨日|前天|今天|今日|刚刚)/.test(raw)
+  ) {
+    eventDate = today();
+  }
+  const clauses = raw.split(/[，,；;。]/).map((item) => item.trim()).filter(Boolean);
+  let note = clauses.length > 1 ? clauses.slice(1).join("；") : "";
+  if (!note && stage === "other") note = raw;
+  note = note
+    .replace(/^(并且|然后|同时|另外|以及)/, "")
+    .trim();
+
+  let matches = findMatchingApplications(company, department, role);
+  if (!company && matches.length === 1) {
+    company = matches[0].application.company;
+    matches = findMatchingApplications(company, department, role);
+  }
+  if (!role && matches.length === 1) role = matches[0].application.role;
+  if (!department && matches.length === 1) department = matches[0].application.department;
+
+  return {
+    raw,
+    company,
+    department,
+    role,
+    stage,
+    channel,
+    eventDate,
+    scheduledAt: schedule.scheduledAt,
+    endedAt: schedule.endedAt,
+    recordedAt: new Date().toISOString(),
+    note,
+    matches,
+  };
+}
+
+function openCapturePreview(text, options = {}) {
+  captureDraft = {
+    ...parseQuickCapture(text),
+    source: options.source || "text",
+    sourceName: options.sourceName || "",
+  };
+  if (captureDraft.source === "image") captureDraft.note = "";
+  capturePendingJdImages = [];
+  const draft = captureDraft;
+  const confidence = [draft.company, draft.role, draft.stage !== "other"].filter(Boolean).length;
+  const confidenceText = confidence === 3 ? "识别完整" : confidence === 2 ? "建议确认" : "需要补充";
+  const sourceSummary =
+    draft.source === "image"
+      ? `邮件截图：${draft.sourceName} · 已提取 ${draft.raw.replace(/\s/g, "").length} 个字符`
+      : draft.raw;
+  document.getElementById("parseSummary").innerHTML = `
+    <span class="parse-source"><i data-lucide="${draft.source === "image" ? "scan-text" : "quote"}"></i>${escapeHtml(sourceSummary)}</span>
+    <span class="parse-confidence ${confidence === 3 ? "is-good" : ""}">${confidenceText}</span>
+  `;
+
+  const target = document.getElementById("captureTargetInput");
+  target.innerHTML =
+    '<option value="new">创建新的岗位记录</option>' +
+    draft.matches
+      .map(
+        ({ application }, index) => `
+          <option value="${application.id}" ${index === 0 ? "selected" : ""}>
+            更新：${escapeHtml(application.company)}${application.department ? ` · ${escapeHtml(application.department)}` : ""} · ${escapeHtml(application.role)}
+          </option>
+        `,
+      )
+      .join("");
+  if (!draft.matches.length) target.value = "new";
+
+  document.getElementById("captureEventDateInput").value = draft.eventDate;
+  document.getElementById("captureRecordedDateInput").value = formatDateTime(draft.recordedAt);
+  document.getElementById("captureCompanyInput").value = draft.company;
+  document.getElementById("captureDepartmentInput").value = draft.department;
+  document.getElementById("captureRoleInput").value = draft.role;
+  document.getElementById("captureStageInput").value = draft.stage;
+  document.getElementById("captureChannelInput").value = draft.channel;
+  document.getElementById("captureScheduledAtInput").value = draft.scheduledAt;
+  document.getElementById("captureEndedAtInput").value = draft.endedAt;
+  document.getElementById("captureNoteInput").value = draft.note;
+  if (target.value !== "new") applyCaptureTarget();
+  renderCaptureJdGallery();
+  openDialog("capturePreviewDialog");
+  refreshIcons();
+}
+
+function applyCaptureTarget() {
+  const id = document.getElementById("captureTargetInput").value;
+  if (id === "new") {
+    if (captureDraft) {
+      document.getElementById("captureCompanyInput").value = captureDraft.company;
+      document.getElementById("captureDepartmentInput").value = captureDraft.department;
+      document.getElementById("captureRoleInput").value = captureDraft.role;
+      document.getElementById("captureChannelInput").value = captureDraft.channel;
+    }
+    renderCaptureJdGallery();
+    return;
+  }
+  const application = state.applications.find((item) => item.id === id);
+  if (!application) return;
+  document.getElementById("captureCompanyInput").value = application.company;
+  document.getElementById("captureDepartmentInput").value = application.department || "";
+  document.getElementById("captureRoleInput").value = application.role;
+  document.getElementById("captureChannelInput").value = application.channel;
+  const available = Math.max(0, 10 - (application.jdCount || 0));
+  if (capturePendingJdImages.length > available) {
+    capturePendingJdImages = capturePendingJdImages.slice(0, available);
+    showToast(`该岗位还可追加 ${available} 张 JD 截图`);
+  }
+  renderCaptureJdGallery();
+}
+
+async function saveCapture() {
+  const targetId = document.getElementById("captureTargetInput").value;
+  const values = {
+    company: document.getElementById("captureCompanyInput").value.trim(),
+    department: document.getElementById("captureDepartmentInput").value.trim(),
+    role: document.getElementById("captureRoleInput").value.trim(),
+    stage: document.getElementById("captureStageInput").value,
+    channel: document.getElementById("captureChannelInput").value,
+    eventDate: document.getElementById("captureEventDateInput").value,
+    scheduledAt: document.getElementById("captureScheduledAtInput").value,
+    endedAt: document.getElementById("captureEndedAtInput").value,
+    note: document.getElementById("captureNoteInput").value.trim(),
+  };
+  const recordedAt = captureDraft ? captureDraft.recordedAt : new Date().toISOString();
+  const progress = createProgress(
+    values.stage,
+    values.eventDate,
+    values.note,
+    recordedAt,
+    captureDraft?.source === "image" ? "image-ocr" : "quick-capture",
+    values,
+  );
+  let application;
+
+  if (targetId !== "new") {
+    application = state.applications.find((item) => item.id === targetId);
+    if (!application) return;
+    application.company = values.company;
+    application.department = values.department;
+    application.role = values.role;
+    application.channel = values.channel;
+    application.progress.push(progress);
+    application.updatedAt = recordedAt;
+    if (values.stage === "applied" && !application.appliedDate) {
+      application.appliedDate = values.eventDate;
+    }
+    if (values.scheduledAt) application.nextActionDate = values.scheduledAt.slice(0, 10);
+    syncApplicationFromProgress(application);
+  } else {
+    const companyInfo = COMPANIES.find(
+      (item) => normalizeText(item.name) === normalizeText(values.company),
+    );
+    application = syncApplicationFromProgress({
+      id: makeId(),
+      company: values.company,
+      department: values.department,
+      role: values.role,
+      industry: companyInfo ? companyInfo.category : "其他",
+      channel: values.channel,
+      city: "",
+      status: values.stage,
+      appliedDate: values.stage === "applied" ? values.eventDate : "",
+      nextActionDate: ["offer", "rejected"].includes(values.stage)
+        ? ""
+        : values.scheduledAt
+          ? values.scheduledAt.slice(0, 10)
+          : dateOffset(7),
+      link: companyInfo ? companyInfo.url : "",
+      notes: "",
+      jdCount: 0,
+      progress: [progress],
+      createdAt: recordedAt,
+      updatedAt: recordedAt,
+    });
+    state.applications.unshift(application);
+  }
+
+  if (capturePendingJdImages.length) {
+    try {
+      const existingImages =
+        targetId === "new" ? [] : await getJdImages(application.id);
+      const mergedImages = [...existingImages];
+      const knownImages = new Set(existingImages.map((image) => image.dataUrl));
+      capturePendingJdImages.forEach((image) => {
+        if (mergedImages.length < 10 && !knownImages.has(image.dataUrl)) {
+          mergedImages.push(image);
+          knownImages.add(image.dataUrl);
+        }
+      });
+      await putJdImages(application.id, mergedImages);
+      application.jdCount = mergedImages.length;
+    } catch (error) {
+      showToast(`进展已保存，但 JD 图片保存失败：${error.message}`);
+    }
+  }
+  saveState();
+  document.getElementById("quickCaptureInput").value = "";
+  closeDialog("capturePreviewDialog");
+  clearQuickCaptureImage();
+  captureDraft = null;
+  capturePendingJdImages = [];
+  specialFilter = "";
+  document.getElementById("statusFilter").value = "";
+  switchView("applications");
+  renderAll();
+  showToast(
+    targetId === "new"
+      ? `已创建 ${application.company} · ${application.role}`
+      : `已记录 ${application.company} 的${getStatus(values.stage).label}进展`,
+  );
+}
+
+async function openApplication(id = "") {
+  const item = id ? state.applications.find((application) => application.id === id) : null;
+  editingApplicationId = item ? item.id : "";
+  document.getElementById("applicationForm").reset();
+  document.getElementById("applicationId").value = editingApplicationId;
+  document.getElementById("applicationDialogTitle").textContent = item ? "编辑岗位档案" : "新增岗位";
+  document.getElementById("deleteApplicationButton").hidden = !item;
+  document.getElementById("progressEditorSection").classList.toggle("is-disabled", !item);
+  document.getElementById("openProgressButton").disabled = !item;
+
+  document.getElementById("companyInput").value = item ? item.company : "";
+  document.getElementById("departmentInput").value = item ? item.department : "";
+  document.getElementById("roleInput").value = item ? item.role : "";
+  document.getElementById("industryInput").value = item ? item.industry : INDUSTRIES[0];
+  document.getElementById("statusInput").value = item ? item.status : "applied";
+  document.getElementById("channelInput").value = item ? item.channel : "官网";
+  document.getElementById("cityInput").value = item ? item.city : "";
+  document.getElementById("appliedDateInput").value = item ? item.appliedDate : today();
+  document.getElementById("nextActionDateInput").value = item
+    ? item.nextActionDate
+    : dateOffset(7);
+  document.getElementById("linkInput").value = item ? item.link : "";
+  document.getElementById("notesInput").value = item ? item.notes : "";
+
+  pendingJdImages = item ? await getJdImages(item.id).catch(() => []) : [];
+  renderJdGallery();
+  renderProgressTimeline(item);
+  openDialog("applicationDialog");
+  setTimeout(() => document.getElementById("companyInput").focus(), 50);
+}
+
+function renderProgressTimeline(application) {
+  const container = document.getElementById("progressTimeline");
+  if (!application) {
+    container.innerHTML =
+      '<div class="empty-editor">先保存岗位档案，再继续添加和编辑进展。</div>';
+    refreshIcons();
+    return;
+  }
+  const progress = getProgress(application).reverse();
+  container.innerHTML = progress.length
+    ? progress
+        .map(
+          (item, index) => `
+            <div class="timeline-item ${index === 0 ? "is-latest" : ""}">
+              <span class="timeline-marker" style="--timeline-color:${getStatus(item.stage).color}">
+                <i data-lucide="${getStatus(item.stage).icon}"></i>
+              </span>
+              <span class="timeline-copy">
+                <span class="timeline-title">
+                  <strong>${getStatus(item.stage).label}</strong>
+                  ${index === 0 ? "<em>当前</em>" : ""}
+                  <small>
+                    ${formatDate(item.eventDate, true)}
+                    ${item.scheduledAt ? ` · ${formatReminderDate(item.scheduledAt)}` : ""}
+                  </small>
+                </span>
+                <span class="timeline-detail">
+                  <span class="timeline-note" title="${escapeHtml(item.note || "未填写备注")}">${item.note ? escapeHtml(item.note) : "未填写备注"}</span>
+                  ${INTERVIEW_STAGES.has(item.stage) ? `<small class="${item.review ? "review-recorded" : "review-missing"}">${item.review ? "评价已记录" : "评价待补充"}</small>` : ""}
+                </span>
+              </span>
+              <button class="row-action" type="button" data-progress-id="${item.id}" aria-label="编辑进展" title="编辑进展">
+                <i data-lucide="pencil"></i>
+              </button>
+            </div>
+          `,
+        )
+        .join("")
+    : '<div class="empty-editor">还没有进展记录。</div>';
+  refreshIcons();
+}
+
+function renderJdGallery() {
+  document.getElementById("jdCount").textContent = `${pendingJdImages.length} 张`;
+  document.getElementById("jdGallery").innerHTML = pendingJdImages
+    .map(
+      (image) => `
+        <figure class="jd-thumb">
+          <button type="button" data-view-jd="${image.id}" aria-label="查看 ${escapeHtml(image.name)}">
+            <img src="${image.dataUrl}" alt="${escapeHtml(image.name)}">
+          </button>
+          <figcaption title="${escapeHtml(image.name)}">${escapeHtml(image.name)}</figcaption>
+          <button class="jd-remove" type="button" data-remove-jd="${image.id}" aria-label="删除图片" title="删除图片">
+            <i data-lucide="x"></i>
+          </button>
+        </figure>
+      `,
+    )
+    .join("");
+  refreshIcons();
+}
+
+function renderCaptureJdGallery() {
+  const targetId = document.getElementById("captureTargetInput")?.value || "new";
+  const application =
+    targetId === "new"
+      ? null
+      : state.applications.find((item) => item.id === targetId);
+  const existingCount = application?.jdCount || 0;
+  document.getElementById("captureJdCount").textContent = application
+    ? `${capturePendingJdImages.length} 张待追加 · 已有 ${existingCount} 张`
+    : `${capturePendingJdImages.length} 张`;
+  document.getElementById("captureJdGallery").innerHTML = capturePendingJdImages
+    .map(
+      (image) => `
+        <figure class="jd-thumb">
+          <button type="button" data-view-capture-jd="${image.id}" aria-label="查看 ${escapeHtml(image.name)}">
+            <img src="${image.dataUrl}" alt="${escapeHtml(image.name)}">
+          </button>
+          <figcaption title="${escapeHtml(image.name)}">${escapeHtml(image.name)}</figcaption>
+          <button class="jd-remove" type="button" data-remove-capture-jd="${image.id}" aria-label="删除图片" title="删除图片">
+            <i data-lucide="x"></i>
+          </button>
+        </figure>
+      `,
+    )
+    .join("");
+  refreshIcons();
+}
+
+function fileToCompressedImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith("image/")) {
+      reject(new Error("只能添加图片文件"));
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      reject(new Error("单张图片不能超过 15MB"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("图片格式无法识别"));
+      image.onload = () => {
+        const maxSide = 1800;
+        const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
+        const width = Math.max(1, Math.round(image.width * ratio));
+        const height = Math.max(1, Math.round(image.height * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, width, height);
+        resolve({
+          id: makeId(),
+          name: file.name || `JD截图_${Date.now()}.jpg`,
+          type: "image/jpeg",
+          dataUrl: canvas.toDataURL("image/jpeg", 0.84),
+          createdAt: new Date().toISOString(),
+        });
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addJdFiles(files, context = "application") {
+  const isCapture = context === "capture";
+  const images = isCapture ? capturePendingJdImages : pendingJdImages;
+  const targetId = isCapture
+    ? document.getElementById("captureTargetInput").value
+    : "";
+  const targetApplication =
+    isCapture && targetId !== "new"
+      ? state.applications.find((item) => item.id === targetId)
+      : null;
+  const storedCount = targetApplication?.jdCount || 0;
+  const available = Math.max(0, 10 - storedCount - images.length);
+  const selected = [...files].slice(0, available);
+  if (!selected.length) {
+    showToast("每个岗位最多保存 10 张 JD 截图");
+    return;
+  }
+  showToast("正在处理 JD 截图…");
+  const results = await Promise.allSettled(selected.map(fileToCompressedImage));
+  const added = results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  const knownImages = new Set(images.map((image) => image.dataUrl));
+  let uniqueAdded = 0;
+  added.forEach((image) => {
+    if (!knownImages.has(image.dataUrl)) {
+      images.push(image);
+      knownImages.add(image.dataUrl);
+      uniqueAdded += 1;
+    }
+  });
+  if (isCapture) renderCaptureJdGallery();
+  else renderJdGallery();
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) showToast(failure.reason.message);
+  else if (uniqueAdded) {
+    showToast(
+      `已添加 ${uniqueAdded} 张 JD 截图，${isCapture ? "确认记录" : "保存岗位"}后生效`,
+    );
+  }
+  else showToast("相同的 JD 截图已存在");
+}
+
+async function saveApplicationFromForm() {
+  const id = document.getElementById("applicationId").value;
+  const existing = id
+    ? state.applications.find((application) => application.id === id)
+    : null;
+  const now = new Date().toISOString();
+  const selectedStatus = document.getElementById("statusInput").value;
+  const values = {
+    company: document.getElementById("companyInput").value.trim(),
+    department: document.getElementById("departmentInput").value.trim(),
+    role: document.getElementById("roleInput").value.trim(),
+    industry: document.getElementById("industryInput").value,
+    channel: document.getElementById("channelInput").value,
+    city: document.getElementById("cityInput").value.trim(),
+    appliedDate: document.getElementById("appliedDateInput").value,
+    nextActionDate: document.getElementById("nextActionDateInput").value,
+    link: document.getElementById("linkInput").value.trim(),
+    notes: document.getElementById("notesInput").value.trim(),
+    jdCount: pendingJdImages.length,
+    updatedAt: now,
+  };
+  let application;
+
+  if (existing) {
+    const previousStatus = existing.status;
+    Object.assign(existing, values);
+    if (previousStatus !== selectedStatus) {
+      existing.progress.push(
+        createProgress(selectedStatus, today(), "手动更新当前进展", now, "manual-status"),
+      );
+    }
+    application = syncApplicationFromProgress(existing);
+  } else {
+    application = syncApplicationFromProgress({
+      id: makeId(),
+      ...values,
+      status: selectedStatus,
+      progress: [
+        createProgress(
+          selectedStatus,
+          values.appliedDate || today(),
+          "创建岗位档案",
+          now,
+          "manual",
+        ),
+      ],
+      createdAt: now,
+    });
+    state.applications.unshift(application);
+  }
+
+  try {
+    await putJdImages(application.id, pendingJdImages);
+  } catch (error) {
+    showToast(`岗位已保存，但 JD 图片保存失败：${error.message}`);
+  }
+  saveState();
+  closeDialog("applicationDialog");
+  renderAll();
+  showToast(existing ? `已更新 ${application.company} 的岗位档案` : `已新增 ${application.company}`);
+}
+
+function openProgressDialog(progressId = "") {
+  const application = state.applications.find((item) => item.id === editingApplicationId);
+  if (!application) {
+    showToast("请先保存岗位档案");
+    return;
+  }
+  const progress = progressId
+    ? application.progress.find((item) => item.id === progressId)
+    : null;
+  document.getElementById("progressIdInput").value = progress ? progress.id : "";
+  document.getElementById("progressDialogTitle").textContent = progress ? "编辑进展" : "新增进展";
+  document.getElementById("progressStageInput").value = progress ? progress.stage : application.status;
+  document.getElementById("progressDateInput").value = progress ? progress.eventDate : today();
+  document.getElementById("progressScheduledAtInput").value = progress
+    ? toDateTimeInput(progress.scheduledAt)
+    : "";
+  document.getElementById("progressEndedAtInput").value = progress
+    ? toDateTimeInput(progress.endedAt)
+    : "";
+  document.getElementById("progressNoteInput").value = progress ? progress.note : "";
+  document.getElementById("progressReviewInput").value = progress ? progress.review : "";
+  document.getElementById("progressRecordedAtInput").value = progress
+    ? formatDateTime(progress.recordedAt)
+    : "保存时自动记录";
+  document.getElementById("deleteProgressButton").hidden = !progress;
+  openDialog("progressDialog");
+}
+
+function saveProgressFromForm() {
+  const application = state.applications.find((item) => item.id === editingApplicationId);
+  if (!application) return;
+  const id = document.getElementById("progressIdInput").value;
+  const existing = id ? application.progress.find((item) => item.id === id) : null;
+  const values = {
+    stage: document.getElementById("progressStageInput").value,
+    eventDate: document.getElementById("progressDateInput").value,
+    scheduledAt: document.getElementById("progressScheduledAtInput").value,
+    endedAt: document.getElementById("progressEndedAtInput").value,
+    note: document.getElementById("progressNoteInput").value.trim(),
+    review: document.getElementById("progressReviewInput").value.trim(),
+  };
+  if (existing) {
+    existing.stage = values.stage;
+    existing.eventDate = values.eventDate;
+    existing.scheduledAt = values.scheduledAt;
+    existing.endedAt = values.endedAt;
+    existing.note = values.note;
+    existing.review = values.review;
+  } else {
+    application.progress.push(
+      createProgress(
+        values.stage,
+        values.eventDate,
+        values.note,
+        new Date().toISOString(),
+        "manual",
+        values,
+      ),
+    );
+  }
+  application.updatedAt = new Date().toISOString();
+  syncApplicationFromProgress(application);
+  if (values.stage === "applied" && !application.appliedDate) {
+    application.appliedDate = values.eventDate;
+  }
+  saveState();
+  document.getElementById("statusInput").value = application.status;
+  renderProgressTimeline(application);
+  closeDialog("progressDialog");
+  renderAll();
+  showToast(existing ? "进展已更新" : "新进展已记录");
+}
+
+function deleteCurrentProgress() {
+  const application = state.applications.find((item) => item.id === editingApplicationId);
+  const id = document.getElementById("progressIdInput").value;
+  const progress = application && application.progress.find((item) => item.id === id);
+  if (!application || !progress) return;
+  confirmAction(
+    "删除进展记录",
+    `确认删除 ${formatDate(progress.eventDate)} 的“${getStatus(progress.stage).label}”记录吗？`,
+    () => {
+      application.progress = application.progress.filter((item) => item.id !== id);
+      application.updatedAt = new Date().toISOString();
+      syncApplicationFromProgress(application);
+      saveState();
+      document.getElementById("statusInput").value = application.status;
+      renderProgressTimeline(application);
+      closeDialog("progressDialog");
+      closeConfirm();
+      renderAll();
+      showToast("进展记录已删除");
+    },
+  );
+}
+
+function updateApplicationStatus(id, status) {
+  const application = state.applications.find((item) => item.id === id);
+  if (!application || application.status === status) return;
+  const now = new Date().toISOString();
+  application.progress.push(
+    createProgress(status, today(), "从投递列表快速更新", now, "quick-status"),
+  );
+  application.updatedAt = now;
+  if (status === "applied" && !application.appliedDate) application.appliedDate = today();
+  if (["offer", "rejected"].includes(status)) application.nextActionDate = "";
+  syncApplicationFromProgress(application);
+  saveState();
+  renderAll();
+  showToast(`${application.company} 已更新为 ${getStatus(status).label}`);
+}
+
+function deleteCurrentApplication() {
+  const id = document.getElementById("applicationId").value;
+  const application = state.applications.find((item) => item.id === id);
+  if (!application) return;
+  confirmAction(
+    "删除岗位档案",
+    `确认删除“${application.company} · ${application.role}”及其全部进展和 JD 截图吗？`,
+    async () => {
+      state.applications = state.applications.filter((item) => item.id !== id);
+      await deleteJdImages(id).catch(() => {});
+      saveState();
+      closeConfirm();
+      closeDialog("applicationDialog");
+      renderAll();
+      showToast("岗位档案已删除");
+    },
+  );
+}
+
+function addCompanyToApplications(companyName) {
+  const company = COMPANIES.find((item) => item.name === companyName);
+  if (!company || state.applications.some((item) => item.company === company.name)) return;
+  const now = new Date().toISOString();
+  const application = syncApplicationFromProgress({
+    id: makeId(),
+    company: company.name,
+    department: "",
+    role: "待确认岗位",
+    industry: company.category,
+    channel: "官网",
+    city: company.meta[0].split(" / ")[0],
+    status: "wish",
+    appliedDate: "",
+    nextActionDate: dateOffset(7),
+    link: company.url,
+    notes: `关注方向：${company.direction}`,
+    jdCount: 0,
+    progress: [createProgress("wish", today(), "从公司导航加入目标", now, "company-library")],
+    createdAt: now,
+    updatedAt: now,
+  });
+  state.applications.unshift(application);
+  saveState();
+  renderAll();
+  showToast(`${company.name} 已加入目标`);
+}
+
+function clearApplicationFilters() {
+  specialFilter = "";
+  document.getElementById("applicationSearch").value = "";
+  document.getElementById("statusFilter").value = "";
+  document.getElementById("industryFilter").value = "";
+  renderApplications();
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportCsv() {
+  if (!state.applications.length) {
+    showToast("当前没有可导出的投递记录");
+    return;
+  }
+  const headers = [
+    "公司",
+    "部门",
+    "岗位",
+    "行业",
+    "最新进展",
+    "投递日期",
+    "最新进展日期",
+    "记录条数",
+    "JD截图数",
+    "渠道",
+    "城市",
+    "下次跟进",
+    "岗位链接",
+    "岗位备注",
+    "进展时间线",
+  ];
+  const rows = state.applications.map((item) => {
+    const latest = getLatestProgress(item);
+    const timeline = getProgress(item)
+      .map(
+        (progress) =>
+          [
+            `${progress.eventDate} ${getStatus(progress.stage).label}`,
+            progress.scheduledAt ? `安排 ${formatDateTime(progress.scheduledAt)}` : "",
+            progress.endedAt ? `结束 ${formatDateTime(progress.endedAt)}` : "",
+            progress.note,
+            progress.review ? `面试评价：${progress.review}` : "",
+          ].filter(Boolean).join("；"),
+      )
+      .join(" | ");
+    return [
+      item.company,
+      item.department,
+      item.role,
+      item.industry,
+      latest ? getStatus(latest.stage).label : "",
+      item.appliedDate,
+      latest ? latest.eventDate : "",
+      item.progress.length,
+      item.jdCount || 0,
+      item.channel,
+      item.city,
+      item.nextActionDate,
+      item.link,
+      item.notes,
+      timeline,
+    ];
+  });
+  const content = [headers, ...rows]
+    .map((row) =>
+      row
+        .map((value) => `"${String(value ?? "").replaceAll('"', '""').replaceAll("\n", " ")}"`)
+        .join(","),
+    )
+    .join("\r\n");
+  downloadBlob(
+    new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8" }),
+    `求职投递与进展_${today()}.csv`,
+  );
+  showToast("CSV 已导出");
+}
+
+function exportJson() {
+  downloadBlob(
+    new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }),
+    `求职进度备份_${today()}.json`,
+  );
+  showToast("文本与进展备份已导出，JD 图片需在岗位中单独查看");
+}
+
+function mergeImportedState(imported) {
+  if (!imported || !Array.isArray(imported.applications)) {
+    throw new Error("文件中没有有效的投递数据");
+  }
+  const migrated = migrateState(imported);
+  const map = new Map(state.applications.map((item) => [item.id, item]));
+  migrated.applications.forEach((item) => {
+    const current = map.get(item.id);
+    if (!current || String(item.updatedAt) > String(current.updatedAt)) map.set(item.id, item);
+  });
+  state.applications = [...map.values()];
+  saveState();
+  renderAll();
+}
+
+function bindEvents() {
+  document.addEventListener("click", (event) => {
+    const viewButton = event.target.closest("[data-view]");
+    if (viewButton) {
+      switchView(viewButton.dataset.view);
+      return;
+    }
+    const goView = event.target.closest("[data-go-view]");
+    if (goView) {
+      switchView(goView.dataset.goView, { filter: goView.dataset.filter || "" });
+      return;
+    }
+    const reminderFilterButton = event.target.closest("[data-reminder-filter]");
+    if (reminderFilterButton) {
+      reminderFilter = reminderFilterButton.dataset.reminderFilter;
+      document.querySelectorAll("[data-reminder-filter]").forEach((button) => {
+        button.classList.toggle("is-active", button === reminderFilterButton);
+      });
+      renderDashboard();
+      return;
+    }
+    const reminderItem = event.target.closest("[data-reminder-progress]");
+    if (reminderItem) {
+      editingApplicationId = reminderItem.dataset.reminderApplication;
+      openProgressDialog(reminderItem.dataset.reminderProgress);
+      if (reminderItem.dataset.reminderType === "review") {
+        setTimeout(() => document.getElementById("progressReviewInput").focus(), 80);
+      }
+      return;
+    }
+    const funnelFilter = event.target.closest("[data-funnel-filter]");
+    if (funnelFilter) {
+      specialFilter = "";
+      switchView("applications", { filter: funnelFilter.dataset.funnelFilter });
+      return;
+    }
+    const stat = event.target.closest("[data-stat-filter]");
+    if (stat) {
+      specialFilter = ["overdue", "interview"].includes(stat.dataset.statFilter)
+        ? stat.dataset.statFilter
+        : "";
+      switchView("applications", { filter: stat.dataset.statFilter });
+      return;
+    }
+    const edit = event.target.closest("[data-edit-id]");
+    if (edit) {
+      openApplication(edit.dataset.editId);
+      return;
+    }
+    if (event.target.closest("[data-open-application]")) {
+      openApplication();
+      return;
+    }
+    const category = event.target.closest("[data-company-category]");
+    if (category) {
+      companyCategory = category.dataset.companyCategory;
+      renderCompanies();
+      return;
+    }
+    const addCompany = event.target.closest("[data-add-company]");
+    if (addCompany) {
+      addCompanyToApplications(addCompany.dataset.addCompany);
+      return;
+    }
+    const example = event.target.closest("[data-quick-example]");
+    if (example) {
+      document.getElementById("quickCaptureInput").value = example.dataset.quickExample;
+      document.getElementById("quickCaptureInput").focus();
+      return;
+    }
+    const progressButton = event.target.closest("[data-progress-id]");
+    if (progressButton) {
+      openProgressDialog(progressButton.dataset.progressId);
+      return;
+    }
+    const calendarEvent = event.target.closest("[data-calendar-progress]");
+    if (calendarEvent) {
+      editingApplicationId = calendarEvent.dataset.calendarApplication;
+      openProgressDialog(calendarEvent.dataset.calendarProgress);
+      return;
+    }
+    const viewCaptureJd = event.target.closest("[data-view-capture-jd]");
+    if (viewCaptureJd) {
+      const image = capturePendingJdImages.find(
+        (item) => item.id === viewCaptureJd.dataset.viewCaptureJd,
+      );
+      if (image) {
+        document.getElementById("lightboxImage").src = image.dataUrl;
+        document.getElementById("imageLightbox").hidden = false;
+      }
+      return;
+    }
+    const removeCaptureJd = event.target.closest("[data-remove-capture-jd]");
+    if (removeCaptureJd) {
+      capturePendingJdImages = capturePendingJdImages.filter(
+        (item) => item.id !== removeCaptureJd.dataset.removeCaptureJd,
+      );
+      renderCaptureJdGallery();
+      return;
+    }
+    const viewJd = event.target.closest("[data-view-jd]");
+    if (viewJd) {
+      const image = pendingJdImages.find((item) => item.id === viewJd.dataset.viewJd);
+      if (image) {
+        document.getElementById("lightboxImage").src = image.dataUrl;
+        document.getElementById("imageLightbox").hidden = false;
+      }
+      return;
+    }
+    const removeJd = event.target.closest("[data-remove-jd]");
+    if (removeJd) {
+      pendingJdImages = pendingJdImages.filter((item) => item.id !== removeJd.dataset.removeJd);
+      renderJdGallery();
+      return;
+    }
+    const closeButton = event.target.closest("[data-close-dialog]");
+    if (closeButton) closeDialog(closeButton.dataset.closeDialog);
+  });
+
+  document.addEventListener("change", (event) => {
+    const statusSelect = event.target.closest("[data-status-id]");
+    if (statusSelect) {
+      updateApplicationStatus(statusSelect.dataset.statusId, statusSelect.value);
+    }
+  });
+
+  document.getElementById("quickCaptureForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = document.getElementById("quickCaptureInput").value.trim();
+    if (!text) {
+      showToast("先写下一条投递或进展信息");
+      return;
+    }
+    openCapturePreview(text);
+  });
+  const quickCapture = document.querySelector(".quick-capture");
+  const quickImageInput = document.getElementById("quickImageInput");
+  document.getElementById("quickImageButton").addEventListener("click", () => {
+    if (!quickOcrBusy) quickImageInput.click();
+  });
+  document.getElementById("quickImageRemoveButton").addEventListener(
+    "click",
+    clearQuickCaptureImage,
+  );
+  quickImageInput.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (file) await recognizeQuickCaptureImage(file);
+    event.target.value = "";
+  });
+  ["dragenter", "dragover"].forEach((name) => {
+    quickCapture.addEventListener(name, (event) => {
+      if (![...(event.dataTransfer?.items || [])].some((item) => item.type.startsWith("image/"))) {
+        return;
+      }
+      event.preventDefault();
+      quickCapture.classList.add("is-dragging");
+    });
+  });
+  ["dragleave", "drop"].forEach((name) => {
+    quickCapture.addEventListener(name, (event) => {
+      if (name === "drop") event.preventDefault();
+      quickCapture.classList.remove("is-dragging");
+    });
+  });
+  quickCapture.addEventListener("drop", (event) => {
+    const image = [...(event.dataTransfer?.files || [])].find((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (image) recognizeQuickCaptureImage(image);
+  });
+  document.getElementById("captureTargetInput").addEventListener("change", applyCaptureTarget);
+  document.getElementById("capturePreviewForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    await saveCapture();
+  });
+
+  document.getElementById("globalAddButton").addEventListener("click", () => openApplication());
+  document.getElementById("applicationForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    await saveApplicationFromForm();
+  });
+  document
+    .getElementById("deleteApplicationButton")
+    .addEventListener("click", deleteCurrentApplication);
+
+  document.getElementById("openProgressButton").addEventListener("click", () => {
+    openProgressDialog();
+  });
+  document.getElementById("progressForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
+    saveProgressFromForm();
+  });
+  document
+    .getElementById("deleteProgressButton")
+    .addEventListener("click", deleteCurrentProgress);
+
+  const bindJdDropzone = (dropzoneId, inputId, context) => {
+    const dropzone = document.getElementById(dropzoneId);
+    const input = document.getElementById(inputId);
+    dropzone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        input.click();
+      }
+    });
+    input.addEventListener("change", async (event) => {
+      await addJdFiles(event.target.files, context);
+      event.target.value = "";
+    });
+    ["dragenter", "dragover"].forEach((name) => {
+      dropzone.addEventListener(name, (event) => {
+        event.preventDefault();
+        dropzone.classList.add("is-dragging");
+      });
+    });
+    ["dragleave", "drop"].forEach((name) => {
+      dropzone.addEventListener(name, (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("is-dragging");
+      });
+    });
+    dropzone.addEventListener("drop", (event) => {
+      addJdFiles(event.dataTransfer.files, context);
+    });
+  };
+  bindJdDropzone("jdDropzone", "jdFileInput", "application");
+  bindJdDropzone("captureJdDropzone", "captureJdFileInput", "capture");
+
+  document.addEventListener("paste", (event) => {
+    const files = [...(event.clipboardData?.items || [])]
+      .filter((item) => item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (!files.length) return;
+    if (document.getElementById("capturePreviewDialog").open) {
+      event.preventDefault();
+      addJdFiles(files, "capture");
+    } else if (document.getElementById("applicationDialog").open) {
+      event.preventDefault();
+      addJdFiles(files, "application");
+    } else if (currentView === "dashboard") {
+      event.preventDefault();
+      recognizeQuickCaptureImage(files[0]);
+    }
+  });
+  document.getElementById("closeLightboxButton").addEventListener("click", () => {
+    document.getElementById("imageLightbox").hidden = true;
+  });
+  document.getElementById("imageLightbox").addEventListener("click", (event) => {
+    if (event.target.id === "imageLightbox") {
+      document.getElementById("imageLightbox").hidden = true;
+    }
+  });
+
+  ["applicationSearch", "statusFilter", "industryFilter"].forEach((id) => {
+    document.getElementById(id).addEventListener("input", () => {
+      if (id === "statusFilter" && document.getElementById(id).value) specialFilter = "";
+      renderApplications();
+    });
+  });
+  document.getElementById("clearFilterButton").addEventListener("click", clearApplicationFilters);
+  document.getElementById("companySearch").addEventListener("input", renderCompanies);
+  document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
+  document.getElementById("reminderSort").addEventListener("change", renderDashboard);
+  document.getElementById("themeToggle").addEventListener("click", toggleTheme);
+  document
+    .getElementById("notificationToggle")
+    .addEventListener("click", toggleInterviewNotifications);
+  document.getElementById("calendarPreviousButton").addEventListener("click", () => {
+    calendarWeekOffset -= 1;
+    renderInterviewCalendar();
+  });
+  document.getElementById("calendarTodayButton").addEventListener("click", () => {
+    calendarWeekOffset = 0;
+    renderInterviewCalendar();
+  });
+  document.getElementById("calendarNextButton").addEventListener("click", () => {
+    calendarWeekOffset += 1;
+    renderInterviewCalendar();
+  });
+
+  const openAccount = () => {
+    renderAccount();
+    openDialog("accountDialog");
+  };
+  document.getElementById("accountButton").addEventListener("click", openAccount);
+  document.getElementById("mobileAccountButton").addEventListener("click", openAccount);
+  document.getElementById("accountForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = document.getElementById("accountEmailInput");
+    const email = input.value.trim();
+    if (!email || !input.checkValidity()) {
+      input.reportValidity();
+      return;
+    }
+    await sendCloudLoginLink(email);
+  });
+  document
+    .getElementById("clearAccountButton")
+    .addEventListener("click", signOutCloudAccount);
+
+  const openData = () => {
+    document.getElementById("clearCloudWorkspaceButton").hidden = !cloudUser;
+    openDialog("dataDialog");
+  };
+  document.getElementById("dataButton").addEventListener("click", openData);
+  document.getElementById("mobileDataButton").addEventListener("click", openData);
+  document.getElementById("exportJsonButton").addEventListener("click", exportJson);
+  document.getElementById("importJsonInput").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        mergeImportedState(JSON.parse(reader.result));
+        closeDialog("dataDialog");
+        showToast("备份已合并");
+      } catch (error) {
+        showToast(error.message || "备份文件格式不正确");
+      }
+      event.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+  document.getElementById("resetDemoButton").addEventListener("click", () => {
+    confirmAction(
+      "恢复示例数据",
+      `${cloudUser ? "当前账户" : "当前本地"}的文本记录和 JD 截图将被清空，并恢复为示例数据。`,
+      async () => {
+        const applicationIds = state.applications.map((application) => application.id);
+        await clearAssetDb(applicationIds).catch(() => {});
+        state = buildDemoState();
+        if (cloudUser?.email) state.account = { email: cloudUser.email };
+        saveState();
+        closeConfirm();
+        closeDialog("dataDialog");
+        clearApplicationFilters();
+        switchView("dashboard");
+        renderAll();
+        showToast("示例数据已恢复");
+      },
+    );
+  });
+  document.getElementById("clearCloudWorkspaceButton").addEventListener("click", () => {
+    if (!cloudUser) return;
+    confirmAction(
+      "清空当前云端工作区",
+      `确认永久删除 ${cloudUser.email} 的全部岗位、进展和 JD 截图吗？其他邮箱不受影响。`,
+      clearCurrentCloudWorkspace,
+    );
+  });
+
+  document.getElementById("confirmCancelButton").addEventListener("click", closeConfirm);
+  document.getElementById("confirmAcceptButton").addEventListener("click", () => {
+    if (confirmCallback) confirmCallback();
+  });
+  document.getElementById("confirmPopover").addEventListener("click", (event) => {
+    if (event.target.id === "confirmPopover") closeConfirm();
+  });
+
+  document.querySelectorAll("dialog").forEach((dialog) => {
+    dialog.addEventListener("close", () => {
+      if (dialog.id === "capturePreviewDialog") {
+        const sourceWasImage = captureDraft?.source === "image";
+        capturePendingJdImages = [];
+        captureDraft = null;
+        if (sourceWasImage) clearQuickCaptureImage();
+      }
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom;
+      if (!inside) dialog.close();
+    });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      document.getElementById("quickCaptureInput").focus();
+    }
+    if (event.key === "Escape" && !document.getElementById("imageLightbox").hidden) {
+      document.getElementById("imageLightbox").hidden = true;
+    }
+  });
+}
+
+async function init() {
+  applyTheme();
+  initializeSelects();
+  bindEvents();
+  renderAll();
+  const requestedView = window.location.hash.slice(1);
+  if (VIEW_META[requestedView]) switchView(requestedView);
+  checkInterviewNotifications();
+  notificationTimer = window.setInterval(checkInterviewNotifications, 60000);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (!localStorage.getItem(THEME_STORAGE_KEY)) applyTheme();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkInterviewNotifications();
+  });
+  refreshIcons();
+  await initializeCloudSync();
+}
+
+document.addEventListener("DOMContentLoaded", init);

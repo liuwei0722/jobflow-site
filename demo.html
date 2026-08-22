@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="求职投递管理四导航交互原型">
+    <title>进度条 · 四导航交互 Demo</title>
+    <link rel="preconnect" href="https://unpkg.com">
+    <link rel="stylesheet" href="./demo.css">
+  </head>
+  <body>
+    <div class="demo-shell">
+      <aside class="demo-sidebar">
+        <a class="demo-brand" href="#overview" aria-label="进度条 Demo 首页">
+          <span class="demo-brand-mark">进</span>
+          <span>
+            <strong>进度条</strong>
+            <small>交互方案 Demo</small>
+          </span>
+        </a>
+
+        <nav class="demo-side-nav" aria-label="主导航">
+          <button class="demo-nav-item is-active" type="button" data-view="overview">
+            <i data-lucide="layout-dashboard"></i>
+            <span>总览</span>
+            <span class="demo-nav-count" id="reminderNavCount">0</span>
+          </button>
+          <button class="demo-nav-item" type="button" data-view="funnel">
+            <i data-lucide="filter"></i>
+            <span>漏斗</span>
+          </button>
+          <button class="demo-nav-item" type="button" data-view="applications">
+            <i data-lucide="briefcase-business"></i>
+            <span>投递管理</span>
+            <span class="demo-nav-count">8</span>
+          </button>
+          <button class="demo-nav-item" type="button" data-view="companies">
+            <i data-lucide="building-2"></i>
+            <span>公司导航</span>
+          </button>
+        </nav>
+
+        <div class="demo-sidebar-spacer"></div>
+
+        <figure class="demo-sidebar-visual">
+          <img
+            src="https://copilot-cn.bytedance.net/api/ide/v1/text_to_image?prompt=realistic%20top-down%20photograph%20of%20a%20graduate%20job%20search%20workspace%2C%20laptop%20showing%20a%20clean%20application%20tracking%20table%2C%20printed%20resume%2C%20pen%20and%20small%20calendar%2C%20natural%20daylight%2C%20neutral%20colors%2C%20no%20visible%20words%2C%20professional%20editorial%20photography&image_size=landscape_16_9"
+            alt="求职进度管理工作台"
+          >
+        </figure>
+
+        <div class="demo-sidebar-footer">
+          <span class="demo-badge"><i data-lucide="flask-conical"></i>交互原型</span>
+          <a href="./index.html">返回当前 MVP<i data-lucide="arrow-up-right"></i></a>
+        </div>
+      </aside>
+
+      <main class="demo-main">
+        <header class="demo-topbar">
+          <div>
+            <p class="demo-eyebrow" id="pageEyebrow">求职行动中心</p>
+            <h1 id="pageTitle">总览</h1>
+          </div>
+          <div class="demo-topbar-actions">
+            <span class="demo-date" id="todayLabel"></span>
+            <button class="demo-button primary" type="button" id="addButton">
+              <i data-lucide="plus"></i>
+              <span>新增投递</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="demo-view is-active" id="view-overview">
+          <section class="capture-band" aria-labelledby="captureTitle">
+            <div class="capture-heading">
+              <span class="capture-icon"><i data-lucide="sparkles"></i></span>
+              <div>
+                <h2 id="captureTitle">一句话记录投递进展</h2>
+                <p>公司、岗位和进展将在确认后写入对应岗位时间线</p>
+              </div>
+              <span class="demo-badge">本地识别</span>
+            </div>
+            <form class="capture-form" id="captureForm">
+              <div class="capture-input">
+                <i data-lucide="message-square-text"></i>
+                <input
+                  id="captureInput"
+                  autocomplete="off"
+                  aria-label="一句话记录投递进展"
+                  placeholder="例如：字节策略运营二面安排在后天下午两点"
+                >
+              </div>
+              <button class="demo-button primary" type="submit">
+                <i data-lucide="scan-text"></i>
+                识别
+              </button>
+            </form>
+            <div class="capture-result" id="captureResult" hidden></div>
+          </section>
+
+          <div class="overview-stats" id="overviewStats"></div>
+
+          <section class="action-section" aria-labelledby="actionTitle">
+            <div class="section-heading">
+              <div>
+                <div class="heading-line">
+                  <h2 id="actionTitle">行动提醒</h2>
+                  <span class="count-badge" id="pendingReminderCount">0 项提醒</span>
+                </div>
+                <p>面试、测评和面试复盘待办</p>
+              </div>
+              <select id="reminderSort" aria-label="提醒排序">
+                <option value="created-desc">生成时间倒序</option>
+                <option value="due-asc">截止时间升序</option>
+              </select>
+            </div>
+
+            <div class="segmented-control" id="reminderFilters" aria-label="提醒类型">
+              <button class="is-active" type="button" data-reminder-filter="assessment">测评</button>
+              <button type="button" data-reminder-filter="interview">面试</button>
+              <button type="button" data-reminder-filter="review">复盘待办</button>
+            </div>
+
+            <div class="reminder-list" id="reminderList"></div>
+          </section>
+        </section>
+
+        <section class="demo-view" id="view-funnel">
+          <div class="funnel-summary">
+            <div>
+              <span>有效岗位</span>
+              <strong>8</strong>
+            </div>
+            <div>
+              <span>面试中</span>
+              <strong>3</strong>
+            </div>
+            <div>
+              <span>Offer 转化率</span>
+              <strong>14%</strong>
+            </div>
+          </div>
+
+          <section class="funnel-section" aria-labelledby="funnelTitle">
+            <div class="section-heading">
+              <div>
+                <h2 id="funnelTitle">当前流程分布</h2>
+                <p>当前停留 / 累计进入，最右侧为对比上一阶段的转化率</p>
+              </div>
+              <span class="demo-badge"><i data-lucide="mouse-pointer-2"></i>可交互</span>
+            </div>
+            <div class="interactive-funnel" id="interactiveFunnel"></div>
+          </section>
+
+          <section class="industry-section" aria-labelledby="industryTitle">
+            <div class="section-heading">
+              <div>
+                <h2 id="industryTitle">行业分布</h2>
+                <p>全部目标岗位的行业构成</p>
+              </div>
+            </div>
+            <div class="industry-layout">
+              <div class="industry-donut" aria-hidden="true">
+                <span><strong>8</strong>岗位</span>
+              </div>
+              <div class="industry-bars" id="industryBars"></div>
+            </div>
+          </section>
+        </section>
+
+        <section class="demo-view" id="view-applications">
+          <div class="applications-toolbar">
+            <div class="demo-search">
+              <i data-lucide="search"></i>
+              <input id="applicationSearch" type="search" placeholder="搜索公司、部门、岗位或备注" aria-label="搜索投递">
+            </div>
+            <select id="applicationStageFilter" aria-label="按进展筛选"></select>
+            <button class="csv-icon-button" type="button" id="exportCsvDemoButton" aria-label="导出 CSV" title="导出 CSV">
+              <i data-lucide="download"></i>
+              <span>CSV</span>
+            </button>
+          </div>
+
+          <div class="demo-active-filter" id="activeApplicationFilter" hidden>
+            <i data-lucide="filter"></i>
+            <span id="activeApplicationFilterText"></span>
+            <button type="button" id="clearApplicationFilter">清除</button>
+          </div>
+
+          <div class="applications-list-wrap">
+            <div class="compact-job-list" id="applicationRows"></div>
+            <div class="demo-empty" id="applicationEmpty" hidden>
+              <i data-lucide="inbox"></i>
+              <strong>没有匹配的岗位</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="demo-view" id="view-companies">
+          <div class="companies-toolbar">
+            <div class="demo-search">
+              <i data-lucide="search"></i>
+              <input id="companySearch" type="search" placeholder="搜索公司或方向" aria-label="搜索公司">
+            </div>
+            <div class="company-chips" id="companyChips"></div>
+          </div>
+          <div class="company-grid" id="companyGrid"></div>
+        </section>
+      </main>
+    </div>
+
+    <nav class="demo-mobile-nav" aria-label="移动端导航">
+      <button class="is-active" type="button" data-view="overview">
+        <i data-lucide="layout-dashboard"></i>
+        <span>总览</span>
+      </button>
+      <button type="button" data-view="funnel">
+        <i data-lucide="filter"></i>
+        <span>漏斗</span>
+      </button>
+      <button type="button" data-view="applications">
+        <i data-lucide="briefcase-business"></i>
+        <span>投递</span>
+      </button>
+      <button type="button" data-view="companies">
+        <i data-lucide="building-2"></i>
+        <span>公司</span>
+      </button>
+    </nav>
+
+    <dialog class="demo-dialog" id="reminderDialog">
+      <div class="dialog-header">
+        <div>
+          <p class="demo-eyebrow" id="dialogEyebrow">行动提醒</p>
+          <h2 id="dialogTitle">提醒详情</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="关闭" title="关闭">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="dialog-body" id="dialogBody"></div>
+      <div class="dialog-footer">
+        <button class="demo-button ghost" type="button" data-close-dialog>关闭</button>
+        <button class="demo-button secondary" type="button" id="dialogOpenJob">
+          <i data-lucide="briefcase-business"></i>
+          查看岗位
+        </button>
+        <button class="demo-button primary" type="button" id="dialogPrimaryAction"></button>
+      </div>
+    </dialog>
+
+    <div class="demo-toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="./demo.js?v=6"></script>
+  </body>
+</html>

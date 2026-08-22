@@ -1,11 +1,11 @@
 :root {
   color-scheme: light;
-  --bg-base: #fafaf8;
+  --bg-base: #f5f6f8;
   --bg-card: #ffffff;
-  --bg-sidebar: #f5f3f0;
-  --bg-hover: #f0edea;
-  --border: #e8e5e0;
-  --border-light: #f0edea;
+  --bg-sidebar: #f8f9fb;
+  --bg-hover: #eef1f4;
+  --border: #dfe3e8;
+  --border-light: #eceff2;
   --accent-primary: #ff6b35;
   --accent-primary-hover: #e55a28;
   --accent-primary-soft: #fff0ea;
@@ -20,22 +20,22 @@
   --color-danger-soft: #fdecee;
   --color-info: #7950a6;
   --color-info-soft: #f2ebf8;
-  --text-primary: #1a1a1a;
-  --text-secondary: #6b7280;
-  --text-tertiary: #9ca3af;
+  --text-primary: #17191c;
+  --text-secondary: #3f4650;
+  --text-tertiary: #66707d;
   --text-inverse: #ffffff;
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 4%);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 6%);
   --shadow-lg: 0 8px 24px rgb(0 0 0 / 8%);
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
   --bg: var(--bg-base);
   --surface: var(--bg-card);
   --surface-soft: var(--bg-sidebar);
   --surface-strong: var(--bg-hover);
   --line: var(--border);
-  --line-strong: #d8d3cc;
+  --line-strong: #cbd1d8;
   --text: var(--text-primary);
   --text-soft: var(--text-secondary);
   --text-dim: var(--text-tertiary);
@@ -54,7 +54,7 @@
   --success-soft: var(--color-success-soft);
   --shadow: var(--shadow-lg);
   --sidebar-bg: var(--bg-sidebar);
-  --topbar-bg: rgb(250 250 248 / 94%);
+  --topbar-bg: rgb(255 255 255 / 96%);
   --mobile-nav-bg: rgb(255 255 255 / 96%);
   --hover-bg: var(--bg-hover);
   --capture-line: var(--border);
@@ -67,7 +67,7 @@
   --overlay: rgb(26 26 26 / 42%);
   --on-brand: var(--text-inverse);
   --sidebar-width: 244px;
-  --topbar-height: 86px;
+  --topbar-height: 66px;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "PingFang SC", "Microsoft YaHei", sans-serif;
 }
@@ -473,7 +473,6 @@ svg {
 
 .main-area {
   min-height: 100vh;
-  margin-left: var(--sidebar-width);
   padding: 0 34px 54px;
 }
 
@@ -481,24 +480,89 @@ svg {
   position: sticky;
   top: 0;
   z-index: 12;
-  display: flex;
+  display: grid;
   min-height: var(--topbar-height);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  margin: 0 -34px;
-  padding: 14px 34px;
+  gap: 24px;
+  padding: 10px 34px;
   border-bottom: 1px solid var(--line);
   background: var(--topbar-bg);
   backdrop-filter: blur(14px);
 }
 
-.topbar h1 {
+.top-brand {
+  display: flex;
+  min-width: 170px;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.top-brand .brand-mark {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+  font-size: 15px;
+}
+
+.top-brand strong,
+.top-brand small {
+  display: block;
+}
+
+.top-brand strong {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.top-brand small {
+  margin-top: 1px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.desktop-nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.desktop-nav .nav-item {
+  width: auto;
+  min-height: 36px;
+  grid-template-columns: 17px auto auto;
+  gap: 7px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+
+.desktop-nav .nav-item svg {
+  width: 16px;
+  height: 16px;
+}
+
+.page-context {
+  max-width: 1340px;
+  margin: 0 auto;
+  padding-top: 22px;
+}
+
+.page-context h1 {
   margin: 1px 0 0;
   font-size: 22px;
   font-weight: 750;
-  letter-spacing: 0;
   line-height: 1.25;
+}
+
+.main-area.is-dashboard .page-context {
+  display: none;
 }
 
 .eyebrow {
@@ -514,6 +578,30 @@ svg {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.top-account-button {
+  display: flex;
+  min-width: 138px;
+  max-width: 190px;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.top-account-button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-soft);
+}
+
+.top-account-button .account-avatar {
+  background: var(--brand-soft);
 }
 
 .button,
@@ -601,7 +689,7 @@ svg {
   display: none;
   max-width: 1340px;
   margin: 0 auto;
-  padding-top: 24px;
+  padding-top: 18px;
   animation: view-in 180ms ease-out;
 }
 
@@ -620,13 +708,36 @@ svg {
   }
 }
 
-.date-line {
+.product-intro {
+  min-height: 104px;
+  margin-bottom: 10px;
+  padding: 16px 18px;
+  border-top: 3px solid var(--brand);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.product-intro-eyebrow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 11px;
+  gap: 7px;
+  margin: 0 0 5px;
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.product-intro h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.product-intro > p:last-child {
+  margin: 7px 0 0;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .date-separator {
@@ -3323,10 +3434,6 @@ tbody tr:hover {
 }
 
 @media (max-width: 1180px) {
-  .stats-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-
   .company-grid {
     grid-template-columns: repeat(2, minmax(230px, 1fr));
   }
@@ -3334,37 +3441,44 @@ tbody tr:hover {
 
 @media (max-width: 900px) {
   :root {
-    --topbar-height: 72px;
+    --topbar-height: 60px;
   }
 
-  .sidebar {
+  .desktop-nav {
     display: none;
   }
 
   .main-area {
-    margin-left: 0;
     padding: 0 20px 84px;
   }
 
   .topbar {
-    margin: 0 -20px;
-    padding: 12px 20px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 10px 20px;
   }
 
-  .mobile-only {
-    display: grid;
+  .top-brand {
+    min-width: 0;
   }
 
-  .account-chip {
+  .top-account-button {
     width: 36px;
+    min-width: 36px;
+    max-width: 36px;
     height: 36px;
-    place-items: center;
     padding: 0;
+    justify-content: center;
+    border: 0;
   }
 
-  .account-chip .account-avatar {
+  .top-account-button .account-avatar {
     width: 32px;
     height: 32px;
+  }
+
+  .top-account-button .account-copy {
+    display: none;
   }
 
   .mobile-nav {
@@ -3407,9 +3521,6 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
-  .sidebar-visual {
-    display: none;
-  }
 }
 
 @media (max-width: 720px) {
@@ -3429,25 +3540,21 @@ tbody tr:hover {
   }
 
   .topbar {
-    width: calc(100% + 28px);
-    margin-right: -14px;
-    margin-left: -14px;
-    padding-right: 14px;
-    padding-left: 14px;
+    width: 100%;
+    padding: 9px 14px;
   }
 
-  .topbar h1 {
-    font-size: 18px;
+  .top-brand small {
+    display: none;
   }
 
-  .topbar > div:first-child {
-    min-width: 0;
-    padding-right: 164px;
+  .top-brand .brand-mark {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
   }
 
   .topbar-actions {
-    position: absolute;
-    right: 14px;
     gap: 4px;
   }
 
@@ -3466,6 +3573,19 @@ tbody tr:hover {
     max-width: 100%;
     min-width: 0;
     padding-top: 16px;
+  }
+
+  .product-intro {
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .product-intro h1 {
+    font-size: 21px;
+  }
+
+  .product-intro > p:last-child {
+    font-size: 12px;
   }
 
   .quick-capture {

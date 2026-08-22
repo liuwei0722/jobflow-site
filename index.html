@@ -3,96 +3,79 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="应届求职投递管理、流程跟进与校招公司导航工具">
-    <title>进度条 · 求职投递管理</title>
+    <meta name="description" content="OfferFlow 秋招投递记录、面试提醒与复盘管理工具">
+    <title>OfferFlow · 秋招进度管理</title>
     <link rel="preconnect" href="https://unpkg.com">
-    <link rel="stylesheet" href="./styles.css?v=15">
+    <link rel="stylesheet" href="./styles.css?v=16">
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="#" aria-label="进度条首页">
-          <span class="brand-mark" aria-hidden="true">进</span>
+      <header class="topbar">
+        <button class="top-brand" type="button" data-view="dashboard" aria-label="OfferFlow 首页">
+          <span class="brand-mark" aria-hidden="true">O</span>
           <span>
-            <strong>进度条</strong>
-            <small>求职投递管理</small>
+            <strong>OfferFlow</strong>
+            <small>秋招进度管理</small>
           </span>
-        </a>
+        </button>
 
-        <nav class="side-nav" aria-label="主导航">
+        <nav class="desktop-nav" aria-label="主导航">
           <button class="nav-item is-active" type="button" data-view="dashboard">
             <i data-lucide="layout-dashboard"></i>
             <span>总览</span>
-          </button>
-          <button class="nav-item" type="button" data-view="funnel">
-            <i data-lucide="git-branch"></i>
-            <span>漏斗</span>
           </button>
           <button class="nav-item" type="button" data-view="applications">
             <i data-lucide="briefcase-business"></i>
             <span>投递</span>
             <span class="nav-count" id="applicationNavCount">0</span>
           </button>
+          <button class="nav-item" type="button" data-view="funnel">
+            <i data-lucide="git-branch"></i>
+            <span>漏斗</span>
+          </button>
           <button class="nav-item" type="button" data-view="companies">
             <i data-lucide="building-2"></i>
-            <span>公司</span>
+            <span>公司库</span>
           </button>
         </nav>
 
-        <div class="sidebar-spacer"></div>
-
-        <figure class="sidebar-visual">
-          <img
-            src="https://copilot-cn.bytedance.net/api/ide/v1/text_to_image?prompt=realistic%20top-down%20photograph%20of%20a%20graduate%20job%20search%20workspace%2C%20laptop%20showing%20a%20clean%20application%20tracking%20table%2C%20printed%20resume%2C%20pen%20and%20small%20calendar%2C%20natural%20daylight%2C%20neutral%20colors%2C%20no%20visible%20words%2C%20professional%20editorial%20photography&image_size=landscape_16_9"
-            alt="求职进度管理工作台"
-          >
-        </figure>
-
-        <div class="sidebar-footer">
-          <button class="sidebar-action" type="button" id="dataButton">
+        <div class="topbar-actions">
+          <button class="icon-button" type="button" id="dataButton" aria-label="数据与备份" title="数据与备份">
             <i data-lucide="database"></i>
-            <span>数据与备份</span>
           </button>
-          <button class="sidebar-action" type="button" id="accountButton">
+          <button class="icon-button" type="button" id="themeToggle" role="switch" aria-checked="false" aria-label="切换为深色模式" title="切换为深色模式">
+            <i data-lucide="moon" id="themeToggleIcon"></i>
+          </button>
+          <button class="top-account-button" type="button" id="accountButton" aria-label="账户与云同步">
             <span class="account-avatar" id="accountAvatar">访</span>
             <span class="account-copy">
               <strong id="accountName">本地访客</strong>
               <small id="accountState">数据保存在此设备</small>
             </span>
-            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="button primary" type="button" id="globalAddButton">
+            <i data-lucide="plus"></i>
+            <span>新增投递</span>
           </button>
         </div>
-      </aside>
+      </header>
 
-      <main class="main-area">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow" id="pageEyebrow">2027 秋招</p>
-            <h1 id="pageTitle">总览</h1>
-          </div>
-          <div class="topbar-actions">
-            <button class="icon-button" type="button" id="themeToggle" role="switch" aria-checked="false" aria-label="切换为深色模式" title="切换为深色模式">
-              <i data-lucide="moon" id="themeToggleIcon"></i>
-            </button>
-            <button class="icon-button mobile-only" type="button" id="mobileDataButton" aria-label="数据与备份" title="数据与备份">
-              <i data-lucide="database"></i>
-            </button>
-            <button class="account-chip mobile-only" type="button" id="mobileAccountButton" aria-label="账户与云同步">
-              <span class="account-avatar" id="mobileAccountAvatar">访</span>
-            </button>
-            <button class="button primary" type="button" id="globalAddButton">
-              <i data-lucide="plus"></i>
-              <span>新增投递</span>
-            </button>
-          </div>
-        </header>
+      <main class="main-area is-dashboard" id="mainArea">
+        <div class="page-context">
+          <p class="eyebrow" id="pageEyebrow">2027 秋招</p>
+          <h1 id="pageTitle">总览</h1>
+        </div>
 
-        <section class="view is-active" id="view-dashboard" aria-labelledby="pageTitle">
-          <div class="date-line">
-            <span id="todayLabel"></span>
-            <span class="date-separator"></span>
-            <span id="progressSummary"></span>
-          </div>
+        <section class="view is-active" id="view-dashboard" aria-labelledby="productIntroTitle">
+          <section class="product-intro">
+            <p class="product-intro-eyebrow">
+              <span>2027 秋招</span>
+              <span aria-hidden="true">·</span>
+              <span id="todayLabel"></span>
+            </p>
+            <h1 id="productIntroTitle">OfferFlow</h1>
+            <p>从投递记录、面试提醒到复盘总结，帮你把秋招流程管理得更清楚。</p>
+          </section>
 
           <section class="quick-capture" aria-label="记录投递进展">
             <form class="quick-capture-form" id="quickCaptureForm">
@@ -275,13 +258,13 @@
         <i data-lucide="layout-dashboard"></i>
         <span>总览</span>
       </button>
-      <button type="button" data-view="funnel">
-        <i data-lucide="git-branch"></i>
-        <span>漏斗</span>
-      </button>
       <button type="button" data-view="applications">
         <i data-lucide="briefcase-business"></i>
         <span>投递</span>
+      </button>
+      <button type="button" data-view="funnel">
+        <i data-lucide="git-branch"></i>
+        <span>漏斗</span>
       </button>
       <button type="button" data-view="companies">
         <i data-lucide="building-2"></i>
@@ -651,6 +634,6 @@
     <script src="https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=18"></script>
+    <script src="./app.js?v=19"></script>
   </body>
 </html>

@@ -1609,7 +1609,6 @@ function renderAccount() {
       ? "登录后云端同步"
       : "数据保存在此设备";
   document.getElementById("accountAvatar").textContent = avatar;
-  document.getElementById("mobileAccountAvatar").textContent = avatar;
 
   emailField.hidden = Boolean(email);
   emailInput.disabled = otpPending || busy;
@@ -1676,6 +1675,7 @@ function switchView(view, options = {}) {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === view);
   });
+  document.getElementById("mainArea").classList.toggle("is-dashboard", view === "dashboard");
   document.getElementById("pageEyebrow").textContent = VIEW_META[view].eyebrow;
   document.getElementById("pageTitle").textContent = VIEW_META[view].title;
 
@@ -2075,7 +2075,6 @@ function bindNotificationWorkerMessages() {
 function renderDashboard() {
   const count = (stages) =>
     state.applications.filter((item) => stages.includes(item.status)).length;
-  const active = count(["applied", "assessment", "first", "second", "final"]);
   const reminders = getActionReminders();
   const scheduleCount = reminders.filter((item) =>
     ["assessment", "interview"].includes(item.type),
@@ -2087,8 +2086,6 @@ function renderDashboard() {
     day: "numeric",
     weekday: "long",
   }).format(new Date());
-  document.getElementById("progressSummary").textContent =
-    `${state.applications.length} 个岗位，${active} 个流程推进中`;
 
   const statItems = [
     {
@@ -3998,7 +3995,6 @@ function bindEvents() {
     openDialog("accountDialog");
   };
   document.getElementById("accountButton").addEventListener("click", openAccount);
-  document.getElementById("mobileAccountButton").addEventListener("click", openAccount);
   document.getElementById("accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const emailInput = document.getElementById("accountEmailInput");
@@ -4044,7 +4040,6 @@ function bindEvents() {
     openDialog("dataDialog");
   };
   document.getElementById("dataButton").addEventListener("click", openData);
-  document.getElementById("mobileDataButton").addEventListener("click", openData);
   document.getElementById("exportJsonButton").addEventListener("click", exportJson);
   document.getElementById("importJsonInput").addEventListener("change", (event) => {
     const file = event.target.files[0];

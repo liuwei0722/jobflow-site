@@ -6,16 +6,35 @@
     <meta name="description" content="OfferFlow 秋招投递记录、面试提醒与复盘管理工具">
     <title>OfferFlow · 秋招进度管理</title>
     <link rel="preconnect" href="https://unpkg.com">
-    <link rel="stylesheet" href="./styles.css?v=16">
+    <link rel="stylesheet" href="./styles.css?v=18">
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <button class="top-brand" type="button" data-view="dashboard" aria-label="OfferFlow 首页">
-          <span class="brand-mark" aria-hidden="true">O</span>
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <defs>
+                <linearGradient id="brandBackgroundGradient" x1="0" x2="1" y1="0" y2="1">
+                  <stop offset="0" stop-color="#4565f2"></stop>
+                  <stop offset="1" stop-color="#8748e9"></stop>
+                </linearGradient>
+                <linearGradient id="brandTrailGradient" x1="27" x2="46" y1="0" y2="0">
+                  <stop offset="0" stop-color="#ffffff" stop-opacity="0"></stop>
+                  <stop offset=".58" stop-color="#ffffff" stop-opacity=".32"></stop>
+                  <stop offset="1" stop-color="#ffffff" stop-opacity=".9"></stop>
+                </linearGradient>
+              </defs>
+              <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#brandBackgroundGradient)"></rect>
+              <path d="M39 15.5a16 16 0 1 0 0 23" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round"></path>
+              <path d="M28 23.5h18M30 27h16M28 30.5h18" fill="none" stroke="url(#brandTrailGradient)" stroke-width="3.3" stroke-linecap="round"></path>
+              <path d="M46 27h8M50 21.5l5.5 5.5-5.5 5.5" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"></path>
+              <path d="m47.5 8.5 1.5 4.2 4.2 1.5-4.2 1.5-1.5 4.2-1.5-4.2-4.2-1.5 4.2-1.5 1.5-4.2Zm1.8 37 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" fill="#ffffff"></path>
+            </svg>
+          </span>
           <span>
             <strong>OfferFlow</strong>
-            <small>秋招进度管理</small>
+            <small>AI 秋招进度管理助手</small>
           </span>
         </button>
 
@@ -66,25 +85,27 @@
           <h1 id="pageTitle">总览</h1>
         </div>
 
-        <section class="view is-active" id="view-dashboard" aria-labelledby="productIntroTitle">
-          <section class="product-intro">
-            <p class="product-intro-eyebrow">
-              <span>2027 秋招</span>
-              <span aria-hidden="true">·</span>
-              <span id="todayLabel"></span>
-            </p>
-            <h1 id="productIntroTitle">OfferFlow</h1>
-            <p>从投递记录、面试提醒到复盘总结，帮你把秋招流程管理得更清楚。</p>
+        <section class="view is-active" id="view-dashboard" aria-labelledby="dashboardPromptTitle">
+          <section class="dashboard-prompt">
+            <h1 id="dashboardPromptTitle">今天该推进哪些秋招事项？</h1>
+            <span class="dashboard-cycle">2027 秋招周期</span>
+            <span id="todayLabel" hidden></span>
           </section>
 
           <section class="quick-capture" aria-label="记录投递进展">
+            <div class="quick-capture-heading">
+              <i class="quick-capture-title-icon" data-lucide="sparkles"></i>
+              <div>
+                <h2>AI 识别投递进展</h2>
+                <p>粘贴 JD、面试通知或上传邮件截图，自动提取关键信息。</p>
+              </div>
+            </div>
             <form class="quick-capture-form" id="quickCaptureForm">
               <div class="quick-capture-input">
-                <i data-lucide="message-square-text"></i>
                 <input
                   id="quickCaptureInput"
                   autocomplete="off"
-                  placeholder="输入投递或面试进展，也可上传邮件截图"
+                  placeholder="粘贴岗位 JD / 面试通知 / 测评邮件内容"
                   aria-label="一句话记录投递进展"
                 >
                 <button class="quick-image-upload-button" type="button" id="quickImageButton" aria-label="上传面试邮件截图" title="上传面试邮件截图">
@@ -93,8 +114,8 @@
                 <input id="quickImageInput" type="file" accept="image/*" hidden>
               </div>
               <button class="button primary" type="submit" id="quickCaptureButton">
-                <i data-lucide="scan-text"></i>
-                识别并记录
+                <i data-lucide="sparkles"></i>
+                AI 识别
               </button>
             </form>
             <div class="quick-image-preview" id="quickImagePreview" hidden>
@@ -114,32 +135,31 @@
 
           <section class="panel interview-calendar-panel" aria-labelledby="interviewCalendarTitle">
             <div class="panel-heading calendar-heading">
-              <div>
-                <div class="heading-line">
-                  <h2 id="interviewCalendarTitle">面试日历</h2>
-                  <span class="count-badge" id="calendarConflictCount">本周无冲突</span>
-                </div>
-                <p id="calendarWeekLabel"></p>
+              <div class="heading-line">
+                <h2 id="interviewCalendarTitle">面试日历</h2>
+                <span class="count-badge" id="calendarConflictCount">本周无冲突</span>
               </div>
+            </div>
+            <div class="calendar-toolbar">
+              <p id="calendarWeekLabel"></p>
               <div class="calendar-heading-actions">
                 <button class="notification-setting" type="button" id="notificationToggle" role="switch" aria-checked="false">
-                  <i data-lucide="bell"></i>
                   <span>提前 1 小时提醒</span>
                   <span class="toggle-track" aria-hidden="true"><span></span></span>
                 </button>
-                <div class="calendar-navigation" aria-label="切换日历周">
-                  <button class="icon-button" type="button" id="calendarPreviousButton" aria-label="上一周" title="上一周">
-                    <i data-lucide="chevron-left"></i>
-                  </button>
-                  <button class="button ghost" type="button" id="calendarTodayButton">本周</button>
-                  <button class="icon-button" type="button" id="calendarNextButton" aria-label="下一周" title="下一周">
-                    <i data-lucide="chevron-right"></i>
-                  </button>
-                </div>
+                <button class="button ghost" type="button" id="calendarTodayButton">本周</button>
               </div>
             </div>
-            <div class="calendar-scroll">
-              <div class="interview-calendar" id="interviewCalendar"></div>
+            <div class="calendar-week-shell">
+              <button class="icon-button calendar-week-arrow" type="button" id="calendarPreviousButton" aria-label="上一周" title="上一周">
+                <i data-lucide="chevron-left"></i>
+              </button>
+              <div class="calendar-scroll">
+                <div class="interview-calendar" id="interviewCalendar"></div>
+              </div>
+              <button class="icon-button calendar-week-arrow" type="button" id="calendarNextButton" aria-label="下一周" title="下一周">
+                <i data-lucide="chevron-right"></i>
+              </button>
             </div>
           </section>
 
@@ -634,6 +654,6 @@
     <script src="https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=19"></script>
+    <script src="./app.js?v=21"></script>
   </body>
 </html>

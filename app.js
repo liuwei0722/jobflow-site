@@ -9,15 +9,15 @@ const CLOUD_SYNC_DELAY = 500;
 const CLOUD_OTP_RESEND_DELAY = 60;
 
 const STATUS = [
-  { value: "wish", label: "想投", color: "#6B7280", icon: "bookmark" },
-  { value: "applied", label: "已投递", color: "#2D5BFF", icon: "send" },
-  { value: "assessment", label: "测评", color: "#7950a6", icon: "file-check-2" },
-  { value: "first", label: "一面", color: "#E5940C", icon: "messages-square" },
-  { value: "second", label: "二面", color: "#E5940C", icon: "message-square-more" },
-  { value: "final", label: "终面", color: "#E5940C", icon: "users-round" },
-  { value: "offer", label: "Offer", color: "#0EA672", icon: "badge-check" },
-  { value: "rejected", label: "已结束", color: "#DC3545", icon: "circle-x" },
-  { value: "other", label: "其他", color: "#6B7280", icon: "circle-ellipsis" },
+  { value: "wish", label: "想投", color: "#74788D", icon: "bookmark" },
+  { value: "applied", label: "已投递", color: "#3478F6", icon: "send" },
+  { value: "assessment", label: "测评", color: "#7357F6", icon: "file-check-2" },
+  { value: "first", label: "一面", color: "#F2A900", icon: "messages-square" },
+  { value: "second", label: "二面", color: "#F2A900", icon: "message-square-more" },
+  { value: "final", label: "终面", color: "#F2A900", icon: "users-round" },
+  { value: "offer", label: "Offer", color: "#16A36F", icon: "badge-check" },
+  { value: "rejected", label: "已结束", color: "#EE5353", icon: "circle-x" },
+  { value: "other", label: "其他", color: "#74788D", icon: "circle-ellipsis" },
 ];
 
 const STATUS_MAP = Object.fromEntries(STATUS.map((item) => [item.value, item]));
@@ -1396,9 +1396,9 @@ function getActionReminders() {
 
 function reminderTheme(type) {
   return {
-    assessment: { label: "测评", icon: "file-check-2", color: "#7950A6", soft: "#F2EBF8" },
-    interview: { label: "面试", icon: "messages-square", color: "#E5940C", soft: "#FFF4DC" },
-    review: { label: "复盘待办", icon: "clipboard-pen-line", color: "#2D5BFF", soft: "#EDF1FF" },
+    assessment: { label: "测评", icon: "file-check-2", color: "#7357F6", soft: "#F4F0FF" },
+    interview: { label: "面试", icon: "messages-square", color: "#F2A900", soft: "#FFF8E6" },
+    review: { label: "复盘待办", icon: "clipboard-pen-line", color: "#3478F6", soft: "#EEF5FF" },
   }[type];
 }
 
@@ -1675,6 +1675,9 @@ function switchView(view, options = {}) {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === view);
   });
+  document
+    .querySelector(".app-shell")
+    ?.classList.toggle("is-dashboard-shell", view === "dashboard");
   document.getElementById("mainArea").classList.toggle("is-dashboard", view === "dashboard");
   document.getElementById("pageEyebrow").textContent = VIEW_META[view].eyebrow;
   document.getElementById("pageTitle").textContent = VIEW_META[view].title;
@@ -1807,6 +1810,10 @@ function formatCalendarEventTime(event) {
 }
 
 function renderInterviewCalendar() {
+  const calendarStartMinutes = 9 * 60;
+  const calendarEndMinutes = 18 * 60;
+  const calendarDurationMinutes = calendarEndMinutes - calendarStartMinutes;
+  const calendarGridHeight = 172;
   const weekStart = startOfCalendarWeek(calendarWeekOffset);
   const weekEnd = addCalendarDays(weekStart, 7);
   const days = Array.from({ length: 7 }, (_, index) => addCalendarDays(weekStart, index));
@@ -1833,48 +1840,53 @@ function renderInterviewCalendar() {
 
   const weekdayFormatter = new Intl.DateTimeFormat("zh-CN", { weekday: "short" });
   const dayFormatter = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" });
-  const renderPeriod = (period, label) => `
-    <div class="calendar-period-label">${label}</div>
-    ${days
-      .map((date) => {
-        const dateKey = toLocalDateValue(date);
-        const dayEvents = (eventsByDate.get(dateKey) || []).filter((event) =>
-          period === "morning"
-            ? event.start.getHours() < 12
-            : event.start.getHours() >= 12,
-        );
-        return `
-          <div class="calendar-period-cell ${dateKey === today() ? "is-today" : ""}">
-            ${dayEvents
-              .map((event) => {
-                const status = getStatus(event.progress.stage);
-                const time = formatCalendarEventTime(event);
-                return `
-                  <button
-                    class="calendar-event ${event.conflict ? "has-conflict" : ""}"
-                    type="button"
-                    data-calendar-application="${event.application.id}"
-                    data-calendar-progress="${event.progress.id}"
-                    style="--event-color:${status.color}"
-                    title="${escapeHtml(time)} · ${escapeHtml(event.application.company)} · ${escapeHtml(event.application.role)} · ${status.label}"
-                  >
-                    <span class="calendar-event-primary">
-                      <time>${escapeHtml(time)}</time>
-                      <strong>${escapeHtml(event.application.company)}</strong>
-                    </span>
-                    <span class="calendar-event-secondary">
-                      <span>${escapeHtml(event.application.role)}</span>
-                      <em>${status.label}</em>
-                    </span>
-                  </button>
-                `;
-              })
-              .join("")}
-          </div>
-        `;
-      })
-      .join("")}
-  `;
+  const timeMarkers = [9, 12, 15, 18];
+  const eventStyle = (event) => {
+    const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
+    const endMinutes = event.end.getHours() * 60 + event.end.getMinutes();
+    const clippedStart = Math.max(
+      calendarStartMinutes,
+      Math.min(calendarEndMinutes, startMinutes),
+    );
+    const clippedEnd = Math.max(
+      clippedStart + 30,
+      Math.min(calendarEndMinutes, endMinutes),
+    );
+    const rawTop =
+      ((clippedStart - calendarStartMinutes) / calendarDurationMinutes) * 100;
+    const top = Math.max(0, Math.min(72, rawTop));
+    const naturalHeight =
+      ((clippedEnd - clippedStart) / calendarDurationMinutes) * calendarGridHeight;
+    const availableHeight = Math.max(
+      38,
+      calendarGridHeight - (top / 100) * calendarGridHeight - 4,
+    );
+    const height = Math.min(Math.max(48, naturalHeight), availableHeight);
+    return `--event-top:${top.toFixed(2)}%;--event-height:${Math.round(height)}px`;
+  };
+  const renderCalendarEvent = (event) => {
+    const status = getStatus(event.progress.stage);
+    const time = formatCalendarEventTime(event);
+    return `
+      <button
+        class="calendar-event ${event.conflict ? "has-conflict" : ""}"
+        type="button"
+        data-calendar-application="${event.application.id}"
+        data-calendar-progress="${event.progress.id}"
+        style="--event-color:${status.color};${eventStyle(event)}"
+        title="${escapeHtml(time)} · ${escapeHtml(event.application.company)} · ${escapeHtml(event.application.role)} · ${status.label}"
+      >
+        <span class="calendar-event-primary">
+          <time>${escapeHtml(time)}</time>
+          <strong>${escapeHtml(event.application.company)}</strong>
+        </span>
+        <span class="calendar-event-secondary">
+          <span>${escapeHtml(event.application.role)}</span>
+          <em>${status.label}</em>
+        </span>
+      </button>
+    `;
+  };
 
   document.getElementById("interviewCalendar").innerHTML = `
     <div class="calendar-days-header">
@@ -1891,9 +1903,28 @@ function renderInterviewCalendar() {
         })
         .join("")}
     </div>
-    <div class="calendar-period-grid">
-      ${renderPeriod("morning", "上午")}
-      ${renderPeriod("afternoon", "下午")}
+    <div class="calendar-time-grid">
+      <div class="calendar-time-axis">
+        ${timeMarkers
+          .map((hour, index) => {
+            const top = ((hour - 9) / 9) * 100;
+            const edgeClass =
+              index === 0 ? "is-first" : index === timeMarkers.length - 1 ? "is-last" : "";
+            return `<span class="calendar-time-label ${edgeClass}" style="top:${top}%">${String(hour).padStart(2, "0")}:00</span>`;
+          })
+          .join("")}
+      </div>
+      ${days
+        .map((date) => {
+          const dateKey = toLocalDateValue(date);
+          const dayEvents = eventsByDate.get(dateKey) || [];
+          return `
+            <div class="calendar-time-day ${dateKey === today() ? "is-today" : ""}">
+              ${dayEvents.map(renderCalendarEvent).join("")}
+            </div>
+          `;
+        })
+        .join("")}
       ${events.length ? "" : '<div class="calendar-empty">本周暂无面试或测评安排</div>'}
     </div>
   `;
@@ -2092,32 +2123,32 @@ function renderDashboard() {
       label: "岗位总数",
       value: state.applications.length,
       note: "全部求职岗位",
-      color: "#6B7280",
-      icon: "layers-3",
+      color: "#3478F6",
+      icon: "briefcase-business",
       filter: "",
     },
     {
       label: "面试中",
       value: count(["first", "second", "final"]),
       note: "一面至终面",
-      color: STATUS_MAP.first.color,
-      icon: STATUS_MAP.first.icon,
+      color: "#7357F6",
+      icon: "users",
       filter: "interview",
     },
     {
       label: "三天内安排",
       value: scheduleCount,
       note: "测评与面试提醒",
-      color: STATUS_MAP.assessment.color,
-      icon: "calendar-clock",
+      color: "#FF6A2A",
+      icon: "calendar-days",
       filter: "",
     },
     {
       label: "待复盘",
       value: reviewCount,
       note: "面试评价未记录",
-      color: STATUS_MAP.applied.color,
-      icon: "clipboard-pen-line",
+      color: "#F2A900",
+      icon: "clock-3",
       filter: "",
     },
   ];
@@ -2192,7 +2223,7 @@ function renderIndustryDistribution() {
   }, {});
   const industries = Object.entries(industryCounts).sort((a, b) => b[1] - a[1]);
   const maxIndustry = Math.max(1, ...industries.map((item) => item[1]));
-  const colors = ["#0EA672", "#2D5BFF", "#E5940C", "#7950A6", "#DC3545", "#6B7280"];
+  const colors = ["#16A36F", "#3478F6", "#F2A900", "#7357F6", "#EE5353", "#74788D"];
   document.getElementById("funnelIndustryDistribution").innerHTML = industries.length
     ? industries
         .slice(0, 8)
@@ -2314,7 +2345,13 @@ function renderInlineProgressTimeline(application, expanded) {
           ? progress
               .map(
                 (item, index) => `
-                  <div class="inline-progress-item ${index === 0 ? "is-current" : ""}">
+                  <button
+                    class="inline-progress-item ${index === 0 ? "is-current" : ""}"
+                    type="button"
+                    data-progress-application="${application.id}"
+                    data-progress-id="${item.id}"
+                    aria-label="编辑 ${escapeHtml(application.company)} ${getStatus(item.stage).label}进展"
+                  >
                     <span class="inline-progress-marker" style="--timeline-color:${getStatus(item.stage).color}"></span>
                     <time>${formatDate(item.eventDate)}</time>
                     <strong style="--timeline-color:${getStatus(item.stage).color}">${getStatus(item.stage).label}</strong>
@@ -2324,7 +2361,7 @@ function renderInlineProgressTimeline(application, expanded) {
                         ? `<small>${escapeHtml(formatReminderDate(item.scheduledAt))}</small>`
                         : ""
                     }
-                  </div>
+                  </button>
                 `,
               )
               .join("")
@@ -2509,6 +2546,9 @@ function renderCompanies() {
 }
 
 function renderAll() {
+  document
+    .querySelector(".app-shell")
+    ?.classList.toggle("is-dashboard-shell", currentView === "dashboard");
   renderNavigation();
   renderAccount();
   if (currentView === "dashboard") renderDashboard();
@@ -3778,6 +3818,9 @@ function bindEvents() {
     }
     const progressButton = event.target.closest("[data-progress-id]");
     if (progressButton) {
+      if (progressButton.dataset.progressApplication) {
+        editingApplicationId = progressButton.dataset.progressApplication;
+      }
       openProgressDialog(progressButton.dataset.progressId);
       return;
     }

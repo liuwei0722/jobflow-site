@@ -5,8 +5,10 @@ const ASSET_DB_NAME = "jobflow_assets_v1";
 const ASSET_STORE_NAME = "jd_images";
 const CLOUD_STATE_TABLE = "user_states";
 const CLOUD_ASSET_BUCKET = "jd-images";
+const CLOUD_AI_FUNCTION = "parse-progress";
 const CLOUD_SYNC_DELAY = 500;
 const CLOUD_OTP_RESEND_DELAY = 60;
+const CLOUD_AI_TIMEOUT = 28000;
 
 const STATUS = [
   { value: "wish", label: "想投", color: "#74788D", icon: "bookmark" },
@@ -276,6 +278,7 @@ let pendingJdImages = [];
 let capturePendingJdImages = [];
 let quickCaptureImage = null;
 let quickOcrBusy = false;
+let quickAiBusy = false;
 let assetDbPromise = null;
 let calendarWeekOffset = 0;
 let notificationTimer = null;
@@ -1440,6 +1443,10 @@ function readImageAsDataUrl(file) {
 
 function renderQuickCaptureImage() {
   const preview = document.getElementById("quickImagePreview");
+  const busy = quickOcrBusy || quickAiBusy;
+  document.getElementById("quickCaptureButton").disabled = busy;
+  document.getElementById("quickImageButton").disabled = busy;
+  document.getElementById("quickImageRemoveButton").disabled = busy;
   if (!quickCaptureImage) {
     preview.hidden = true;
     preview.classList.remove("is-processing", "has-error");
@@ -1453,12 +1460,10 @@ function renderQuickCaptureImage() {
   document.getElementById("quickImageStatus").textContent = quickCaptureImage.message;
   document.getElementById("quickImageProgressBar").style.width =
     `${Math.round((quickCaptureImage.progress || 0) * 100)}%`;
-  document.getElementById("quickImageRemoveButton").disabled = quickOcrBusy;
-  document.getElementById("quickImageButton").disabled = quickOcrBusy;
 }
 
 function clearQuickCaptureImage() {
-  if (quickOcrBusy) return;
+  if (quickOcrBusy || quickAiBusy) return;
   quickCaptureImage = null;
   document.getElementById("quickImageInput").value = "";
   renderQuickCaptureImage();
@@ -1491,8 +1496,8 @@ function updateOcrProgress(message) {
 }
 
 async function recognizeQuickCaptureImage(file) {
-  if (quickOcrBusy) {
-    showToast("当前截图仍在识别中");
+  if (quickOcrBusy || quickAiBusy) {
+    showToast("当前内容仍在识别中");
     return;
   }
   try {
@@ -1527,7 +1532,7 @@ async function recognizeQuickCaptureImage(file) {
       .replace(/\s*\n+\s*/g, "；")
       .slice(0, 300);
     renderQuickCaptureImage();
-    openCapturePreview(text, {
+    await openCapturePreview(text, {
       source: "image",
       sourceName: quickCaptureImage.name,
     });
@@ -3020,24 +3025,152 @@ function parseQuickCapture(text) {
   };
 }
 
-function openCapturePreview(text, options = {}) {
+function normalizeAiDate(value, fallback = "") {
+  const date = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fallback;
+  return Number.isNaN(new Date(`${date}T12:00:00`).getTime()) ? fallback : date;
+}
+
+function normalizeAiDateTime(value, fallback = "") {
+  const dateTime = String(value || "").trim().slice(0, 16);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dateTime)) return fallback;
+  return Number.isNaN(new Date(dateTime).getTime()) ? fallback : dateTime;
+}
+
+function mergeAiCapture(localDraft, aiResult) {
+  const aiStage = normalizeStatus(aiResult.stage);
+  const stage =
+    aiStage === "other" && localDraft.stage !== "other"
+      ? localDraft.stage
+      : aiStage;
+  const company =
+    cleanCapturedField(aiResult.company, "company") || localDraft.company;
+  const department =
+    cleanCapturedField(aiResult.department) || localDraft.department;
+  const role =
+    cleanCapturedField(aiResult.role, "role") || localDraft.role;
+  const scheduledAt = normalizeAiDateTime(
+    aiResult.scheduledAt,
+    localDraft.scheduledAt,
+  );
+  let endedAt = normalizeAiDateTime(aiResult.endedAt, localDraft.endedAt);
+  if (
+    scheduledAt &&
+    endedAt &&
+    new Date(endedAt).getTime() <= new Date(scheduledAt).getTime()
+  ) {
+    endedAt = "";
+  }
+
+  let matches = findMatchingApplications(company, department, role);
+  const matchedApplication = matches.length === 1 ? matches[0].application : null;
+
+  return {
+    ...localDraft,
+    company: company || matchedApplication?.company || "",
+    department: department || matchedApplication?.department || "",
+    role: role || matchedApplication?.role || "",
+    stage,
+    channel: normalizeChannel(aiResult.channel || localDraft.channel),
+    eventDate: normalizeAiDate(aiResult.eventDate, localDraft.eventDate),
+    scheduledAt,
+    endedAt,
+    note: String(aiResult.note || localDraft.note || "").trim().slice(0, 500),
+    matches,
+    aiEnhanced: true,
+    aiConfidence: Math.max(0, Math.min(1, Number(aiResult.confidence) || 0)),
+    aiWarnings: Array.isArray(aiResult.warnings)
+      ? aiResult.warnings.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+      : [],
+  };
+}
+
+async function parseQuickCaptureWithAi(text, options = {}) {
+  if (!supabaseClient || !cloudUser || !cloudSyncReady) return null;
+
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(
+      () => reject(new Error("AI 识别超时")),
+      CLOUD_AI_TIMEOUT,
+    );
+  });
+  const invoke = supabaseClient.functions.invoke(CLOUD_AI_FUNCTION, {
+    body: {
+      text: String(text || "").slice(0, 12000),
+      source: options.source === "image" ? "image" : "text",
+      currentDate: today(),
+      timezone:
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+      existingApplications: state.applications.slice(0, 50).map((application) => ({
+        company: application.company,
+        department: application.department,
+        role: application.role,
+      })),
+    },
+  });
+
+  try {
+    const { data, error } = await Promise.race([invoke, timeout]);
+    if (error) throw error;
+    if (!data?.result || typeof data.result !== "object") {
+      throw new Error("AI 返回内容无效");
+    }
+    return data.result;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function openCapturePreview(text, options = {}) {
+  const localDraft = parseQuickCapture(text);
+  let parsedDraft = localDraft;
+
+  if (supabaseClient && cloudUser && cloudSyncReady) {
+    quickAiBusy = true;
+    renderQuickCaptureImage();
+    showToast("正在使用 AI 提取关键信息");
+    try {
+      const aiResult = await parseQuickCaptureWithAi(text, options);
+      if (aiResult) parsedDraft = mergeAiCapture(localDraft, aiResult);
+    } catch (error) {
+      console.warn("Cloud AI parsing unavailable.", error?.message || error);
+      showToast("AI 暂时不可用，已切换为本地识别");
+    } finally {
+      quickAiBusy = false;
+      renderQuickCaptureImage();
+    }
+  }
+
   captureDraft = {
-    ...parseQuickCapture(text),
+    ...parsedDraft,
     source: options.source || "text",
     sourceName: options.sourceName || "",
   };
-  if (captureDraft.source === "image") captureDraft.note = "";
+  if (captureDraft.source === "image" && !captureDraft.aiEnhanced) {
+    captureDraft.note = "";
+  }
   capturePendingJdImages = [];
   const draft = captureDraft;
   const confidence = [draft.company, draft.role, draft.stage !== "other"].filter(Boolean).length;
-  const confidenceText = confidence === 3 ? "识别完整" : confidence === 2 ? "建议确认" : "需要补充";
+  const confidenceText = draft.aiEnhanced
+    ? draft.aiWarnings.length
+      ? "AI 建议确认"
+      : confidence === 3
+        ? "AI 识别完整"
+        : "AI 需要补充"
+    : confidence === 3
+      ? "识别完整"
+      : confidence === 2
+        ? "建议确认"
+        : "需要补充";
   const sourceSummary =
     draft.source === "image"
       ? `邮件截图：${draft.sourceName} · 已提取 ${draft.raw.replace(/\s/g, "").length} 个字符`
       : draft.raw;
   document.getElementById("parseSummary").innerHTML = `
     <span class="parse-source"><i data-lucide="${draft.source === "image" ? "scan-text" : "quote"}"></i>${escapeHtml(sourceSummary)}</span>
-    <span class="parse-confidence ${confidence === 3 ? "is-good" : ""}">${confidenceText}</span>
+    <span class="parse-confidence ${confidence === 3 && !draft.aiWarnings?.length ? "is-good" : ""}">${confidenceText}</span>
   `;
 
   const target = document.getElementById("captureTargetInput");
@@ -3110,12 +3243,19 @@ async function saveCapture() {
     note: document.getElementById("captureNoteInput").value.trim(),
   };
   const recordedAt = captureDraft ? captureDraft.recordedAt : new Date().toISOString();
+  const progressSource = captureDraft?.aiEnhanced
+    ? captureDraft.source === "image"
+      ? "image-ocr-ai"
+      : "quick-capture-ai"
+    : captureDraft?.source === "image"
+      ? "image-ocr"
+      : "quick-capture";
   const progress = createProgress(
     values.stage,
     values.eventDate,
     values.note,
     recordedAt,
-    captureDraft?.source === "image" ? "image-ocr" : "quick-capture",
+    progressSource,
     values,
   );
   let application;
@@ -3875,19 +4015,20 @@ function bindEvents() {
     }
   });
 
-  document.getElementById("quickCaptureForm").addEventListener("submit", (event) => {
+  document.getElementById("quickCaptureForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (quickOcrBusy || quickAiBusy) return;
     const text = document.getElementById("quickCaptureInput").value.trim();
     if (!text) {
       showToast("先写下一条投递或进展信息");
       return;
     }
-    openCapturePreview(text);
+    await openCapturePreview(text);
   });
   const quickCapture = document.querySelector(".quick-capture");
   const quickImageInput = document.getElementById("quickImageInput");
   document.getElementById("quickImageButton").addEventListener("click", () => {
-    if (!quickOcrBusy) quickImageInput.click();
+    if (!quickOcrBusy && !quickAiBusy) quickImageInput.click();
   });
   document.getElementById("quickImageRemoveButton").addEventListener(
     "click",

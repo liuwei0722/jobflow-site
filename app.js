@@ -1340,30 +1340,33 @@ function getActionReminders() {
   state.applications.forEach((application) => {
     const progressItems = getProgress(application);
     const latest = progressItems[progressItems.length - 1];
-    if (latest && ["assessment", "first", "second", "final"].includes(latest.stage)) {
-      const target = reminderTarget(application, latest);
-      const targetTime = new Date(target).getTime();
-      const daysUntil = (targetTime - Date.now()) / 86400000;
-      const interviewEnded = INTERVIEW_STAGES.has(latest.stage)
-        ? new Date(latest.endedAt || targetTime + 2 * 3600000).getTime() <= Date.now()
-        : false;
-      if (
-        target &&
-        Number.isFinite(targetTime) &&
-        daysUntil <= 3 &&
-        !interviewEnded
-      ) {
-        reminders.push({
-          id: `schedule-${latest.id}`,
-          type: latest.stage === "assessment" ? "assessment" : "interview",
-          title: latest.stage === "assessment" ? "测评安排" : `${getStatus(latest.stage).label}安排`,
-          application,
-          progress: latest,
-          dueAt: target,
-          createdAt: latest.recordedAt,
-        });
-      }
-    }
+    progressItems
+      .filter((progress) => progress.stage === "assessment" || INTERVIEW_STAGES.has(progress.stage))
+      .forEach((progress) => {
+        const target =
+          progress.scheduledAt ||
+          (progress.id === latest?.id ? reminderTarget(application, progress) : "");
+        const targetTime = new Date(target).getTime();
+        const interviewEnded = INTERVIEW_STAGES.has(progress.stage)
+          ? new Date(progress.endedAt || targetTime + 2 * 3600000).getTime() <= Date.now()
+          : false;
+        if (
+          target &&
+          Number.isFinite(targetTime) &&
+          targetTime > Date.now() &&
+          !interviewEnded
+        ) {
+          reminders.push({
+            id: `schedule-${progress.id}`,
+            type: progress.stage === "assessment" ? "assessment" : "interview",
+            title: progress.stage === "assessment" ? "测评安排" : `${getStatus(progress.stage).label}安排`,
+            application,
+            progress,
+            dueAt: target,
+            createdAt: progress.recordedAt,
+          });
+        }
+      });
 
     progressItems
       .filter((progress) => INTERVIEW_STAGES.has(progress.stage) && !progress.review)
@@ -2141,7 +2144,7 @@ function renderDashboard() {
       filter: "interview",
     },
     {
-      label: "三天内安排",
+      label: "未开始安排",
       value: scheduleCount,
       note: "测评与面试提醒",
       color: "#FF6A2A",
@@ -2199,7 +2202,7 @@ function renderDashboard() {
                   <em>${theme.label}</em>
                 </span>
                 <span>${escapeHtml(item.application.department || "部门待补充")} · ${escapeHtml(item.application.role)}</span>
-                <small>${item.type === "review" ? "面试已结束，请补充面试评价" : "进入时间前 3 天开始提醒"}</small>
+                <small>${item.type === "review" ? "面试已结束，请补充面试评价" : "未开始前持续提醒"}</small>
               </span>
               <time>
                 <span>${formatReminderDate(item.dueAt)}</span>

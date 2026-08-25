@@ -5,10 +5,17 @@ const ASSET_DB_NAME = "jobflow_assets_v1";
 const ASSET_STORE_NAME = "jd_images";
 const CLOUD_STATE_TABLE = "user_states";
 const CLOUD_ASSET_BUCKET = "jd-images";
+const CLOUD_INTERVIEW_MEDIA_BUCKET = "interview-media-temp";
 const CLOUD_AI_FUNCTION = "parse-progress";
+const CLOUD_INTERVIEW_AI_FUNCTION = "analyze-interview";
+const CLOUD_INTERVIEW_ASR_FUNCTION = "transcribe-interview";
 const CLOUD_SYNC_DELAY = 500;
 const CLOUD_OTP_RESEND_DELAY = 60;
 const CLOUD_AI_TIMEOUT = 28000;
+const CLOUD_INTERVIEW_AI_TIMEOUT = 48000;
+const INTERVIEW_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
+const INTERVIEW_ASR_POLL_INTERVAL = 4000;
+const INTERVIEW_ASR_TIMEOUT = 30 * 60 * 1000;
 
 const STATUS = [
   { value: "wish", label: "想投", color: "#74788D", icon: "bookmark" },
@@ -25,6 +32,16 @@ const STATUS = [
 const STATUS_MAP = Object.fromEntries(STATUS.map((item) => [item.value, item]));
 const FUNNEL_STAGES = ["applied", "assessment", "first", "second", "final", "offer"];
 const INTERVIEW_STAGES = new Set(["first", "second", "final"]);
+const REVIEW_CATEGORIES = [
+  { value: "personal", label: "个人信息", color: "#3478F6" },
+  { value: "internship", label: "实习深挖", color: "#7357F6" },
+  { value: "business", label: "业务提问", color: "#F2A900" },
+  { value: "reverse", label: "反问环节", color: "#16A36F" },
+  { value: "pending", label: "待确认", color: "#EE5353" },
+];
+const REVIEW_CATEGORY_MAP = Object.fromEntries(
+  REVIEW_CATEGORIES.map((item) => [item.value, item]),
+);
 const OLD_STATUS_MAP = {
   written: "assessment",
   interview: "first",
@@ -262,11 +279,13 @@ const VIEW_META = {
   dashboard: { eyebrow: "求职行动中心", title: "总览" },
   funnel: { eyebrow: "阶段转化分析", title: "漏斗" },
   applications: { eyebrow: "全流程管理", title: "投递管理" },
+  reviews: { eyebrow: "面试经验沉淀", title: "面试复盘" },
   companies: { eyebrow: "目标公司库", title: "公司导航" },
 };
 
 let currentView = "dashboard";
 let reminderFilter = "assessment";
+let interviewReviewFilter = "all";
 let companyCategory = "全部";
 let specialFilter = "";
 let confirmCallback = null;
@@ -279,6 +298,10 @@ let capturePendingJdImages = [];
 let quickCaptureImage = null;
 let quickOcrBusy = false;
 let quickAiBusy = false;
+let interviewReviewDraft = null;
+let selectedInterviewMedia = null;
+let activeInterviewTranscription = null;
+const expandedReviewQuestionIds = new Set();
 let assetDbPromise = null;
 let calendarWeekOffset = 0;
 let notificationTimer = null;
@@ -336,6 +359,36 @@ function normalizeChannel(value) {
   return CHANNELS.includes(channel) ? channel : "其他";
 }
 
+function normalizeInterviewReview(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const questions = Array.isArray(value.questions)
+    ? value.questions
+        .map((item) => ({
+          id: item?.id || makeId(),
+          category: REVIEW_CATEGORY_MAP[item?.category] ? item.category : "pending",
+          question: String(item?.question || "").trim(),
+          originalText: String(item?.originalText || item?.question || "").trim(),
+          followUps: Array.isArray(item?.followUps)
+            ? item.followUps.map((entry) => String(entry || "").trim()).filter(Boolean)
+            : [],
+          confidence: Math.max(0, Math.min(1, Number(item?.confidence) || 0)),
+        }))
+        .filter((item) => item.question)
+    : [];
+  return {
+    status: value.status === "completed" ? "completed" : "reviewing",
+    transcript: String(value.transcript || "").trim(),
+    questions,
+    summary: String(value.summary || "").trim(),
+    analysisSource: value.analysisSource === "ai" ? "ai" : "local",
+    model: String(value.model || "").trim(),
+    sourceFileName: String(value.sourceFileName || "").trim(),
+    sourceMimeType: String(value.sourceMimeType || "").trim(),
+    createdAt: value.createdAt || new Date().toISOString(),
+    updatedAt: value.updatedAt || value.createdAt || new Date().toISOString(),
+  };
+}
+
 function createProgress(
   stage,
   eventDate,
@@ -354,6 +407,7 @@ function createProgress(
     scheduledAt: details.scheduledAt || "",
     endedAt: details.endedAt || "",
     review: String(details.review || "").trim(),
+    interviewReview: normalizeInterviewReview(details.interviewReview),
   };
 }
 
@@ -399,6 +453,7 @@ function normalizeApplication(application) {
         scheduledAt: item.scheduledAt || item.startAt || item.deadlineAt || "",
         endedAt: item.endedAt || item.endAt || "",
         review: String(item.review || item.evaluation || "").trim(),
+        interviewReview: normalizeInterviewReview(item.interviewReview),
       }))
     : [
         createProgress(
@@ -435,7 +490,7 @@ function migrateState(raw) {
     ? raw.applications.map(normalizeApplication)
     : [];
   return {
-    version: 4,
+    version: 5,
     account: raw.account && typeof raw.account === "object" ? raw.account : { email: "" },
     settings: {
       interviewNotifications: Boolean(raw.settings?.interviewNotifications),
@@ -486,7 +541,7 @@ function makeDemoApplication(config) {
 
 function buildDemoState() {
   return {
-    version: 4,
+    version: 5,
     account: { email: "" },
     settings: {
       interviewNotifications: false,
@@ -624,7 +679,7 @@ function buildDemoState() {
 
 function buildEmptyState(email = "") {
   return {
-    version: 4,
+    version: 5,
     account: { email },
     settings: {
       interviewNotifications: false,
@@ -662,7 +717,7 @@ function cloudPendingStorageKey(userId = cloudUser?.id) {
 }
 
 function saveState() {
-  state.version = 4;
+  state.version = 5;
   if (cloudUser?.email) state.account = { email: cloudUser.email };
   localStorage.setItem(cloudStateStorageKey(), JSON.stringify(state));
   if (cloudUser && cloudSyncReady) {
@@ -692,7 +747,7 @@ function setCloudStatus(status, message = "") {
 
 function serializableCloudState() {
   const snapshot = JSON.parse(JSON.stringify(state));
-  snapshot.version = 4;
+  snapshot.version = 5;
   snapshot.account = { email: cloudUser?.email || "" };
   return snapshot;
 }
@@ -1639,7 +1694,7 @@ function renderAccount() {
   if (email) {
     summaryIcon.setAttribute(
       "data-lucide",
-      cloudStatus === "error" ? "cloud-alert" : "cloud-check",
+      cloudStatus === "error" ? "cloud-alert" : "cloud",
     );
     summaryTitle.textContent = email;
     summaryDescription.textContent =
@@ -1701,6 +1756,8 @@ function switchView(view, options = {}) {
     renderCompanies();
   } else if (view === "funnel") {
     renderFunnel();
+  } else if (view === "reviews") {
+    renderInterviewReviews();
   } else {
     renderDashboard();
   }
@@ -1709,6 +1766,149 @@ function switchView(view, options = {}) {
 
 function renderNavigation() {
   document.getElementById("applicationNavCount").textContent = state.applications.length;
+  const pendingCount = getInterviewReviewItems().filter(
+    (item) => item.reviewStatus === "pending",
+  ).length;
+  ["reviewNavCount", "mobileReviewNavCount"].forEach((id) => {
+    const badge = document.getElementById(id);
+    if (!badge) return;
+    badge.textContent = pendingCount;
+    badge.hidden = pendingCount === 0;
+  });
+}
+
+function interviewEndTime(progress) {
+  if (progress.endedAt) {
+    const endedAt = new Date(progress.endedAt);
+    if (!Number.isNaN(endedAt.getTime())) return endedAt;
+  }
+  if (progress.scheduledAt) {
+    const scheduledAt = new Date(progress.scheduledAt);
+    if (!Number.isNaN(scheduledAt.getTime())) {
+      return new Date(scheduledAt.getTime() + 2 * 3600000);
+    }
+  }
+  if (progress.eventDate) {
+    const inferred = new Date(`${progress.eventDate}T18:00`);
+    if (!Number.isNaN(inferred.getTime())) return inferred;
+  }
+  return null;
+}
+
+function getInterviewReviewStatus(progress) {
+  if (
+    progress.interviewReview?.status === "completed" ||
+    progress.interviewReview?.questions?.length ||
+    progress.review
+  ) {
+    return "completed";
+  }
+  const endTime = interviewEndTime(progress);
+  return endTime && endTime.getTime() <= Date.now() ? "pending" : "upcoming";
+}
+
+function getInterviewReviewItems() {
+  const priority = { pending: 0, completed: 1, upcoming: 2 };
+  return state.applications
+    .flatMap((application) =>
+      getProgress(application)
+        .filter((progress) => INTERVIEW_STAGES.has(progress.stage))
+        .map((progress) => ({
+          application,
+          progress,
+          reviewStatus: getInterviewReviewStatus(progress),
+        })),
+    )
+    .sort((a, b) => {
+      const statusDifference =
+        priority[a.reviewStatus] - priority[b.reviewStatus];
+      if (statusDifference !== 0) return statusDifference;
+      const aTime = a.progress.scheduledAt || `${a.progress.eventDate}T00:00`;
+      const bTime = b.progress.scheduledAt || `${b.progress.eventDate}T00:00`;
+      return String(bTime).localeCompare(String(aTime));
+    });
+}
+
+function interviewReviewStatusMeta(status) {
+  return {
+    pending: { label: "待复盘", icon: "clock-3", color: "#EE5353" },
+    completed: { label: "已复盘", icon: "circle-check-big", color: "#16A36F" },
+    upcoming: { label: "待面试", icon: "calendar-clock", color: "#F2A900" },
+  }[status];
+}
+
+function renderInterviewReviews() {
+  const allItems = getInterviewReviewItems();
+  const visibleItems = allItems.filter(
+    (item) =>
+      interviewReviewFilter === "all" ||
+      item.reviewStatus === interviewReviewFilter,
+  );
+  const pendingCount = allItems.filter((item) => item.reviewStatus === "pending").length;
+  const completedCount = allItems.filter(
+    (item) => item.reviewStatus === "completed",
+  ).length;
+  const upcomingCount = allItems.filter(
+    (item) => item.reviewStatus === "upcoming",
+  ).length;
+
+  document.getElementById("reviewSummaryBand").innerHTML = `
+    <div><span>面试场次</span><strong>${allItems.length}</strong></div>
+    <div><span>待复盘</span><strong>${pendingCount}</strong></div>
+    <div><span>已复盘</span><strong>${completedCount}</strong></div>
+    <div><span>待面试</span><strong>${upcomingCount}</strong></div>
+  `;
+  document.getElementById("reviewResultCount").textContent =
+    `${visibleItems.length} 场面试`;
+
+  document.getElementById("interviewReviewList").innerHTML = visibleItems
+    .map((item) => {
+      const status = interviewReviewStatusMeta(item.reviewStatus);
+      const review = item.progress.interviewReview;
+      const questionCount = review?.questions?.length || 0;
+      const date = item.progress.scheduledAt
+        ? formatReminderDate(item.progress.scheduledAt)
+        : formatDate(item.progress.eventDate, true);
+      const action =
+        item.reviewStatus === "completed"
+          ? "查看复盘"
+          : item.reviewStatus === "pending"
+            ? "生成复盘"
+            : "查看场次";
+      return `
+        <button
+          class="interview-review-row"
+          type="button"
+          data-open-review-app="${item.application.id}"
+          data-open-review-progress="${item.progress.id}"
+          data-review-status="${item.reviewStatus}"
+          style="--review-status-color:${status.color}"
+        >
+          <span class="review-row-icon"><i data-lucide="${status.icon}"></i></span>
+          <span class="review-row-main">
+            <span class="review-row-title">
+              <strong>${escapeHtml(item.application.company)} · ${escapeHtml(item.application.role)}</strong>
+              <em>${getStatus(item.progress.stage).label}</em>
+            </span>
+            <span>${escapeHtml(item.application.department || "部门待补充")} · ${escapeHtml(date)}</span>
+            <small>${
+              item.reviewStatus === "completed"
+                ? questionCount
+                  ? `已整理 ${questionCount} 个问题`
+                  : "已记录手动复盘"
+                : item.reviewStatus === "pending"
+                  ? "面试已结束，等待整理"
+                  : "面试尚未开始"
+            }</small>
+          </span>
+          <span class="review-row-status">${status.label}</span>
+          <span class="review-row-action">${action}<i data-lucide="chevron-right"></i></span>
+        </button>
+      `;
+    })
+    .join("");
+  document.getElementById("interviewReviewEmpty").hidden = visibleItems.length > 0;
+  refreshIcons();
 }
 
 function getOverdueApplications() {
@@ -2553,6 +2753,770 @@ function renderCompanies() {
   refreshIcons();
 }
 
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+}
+
+function getReviewCategory(category) {
+  return REVIEW_CATEGORY_MAP[category] || REVIEW_CATEGORY_MAP.pending;
+}
+
+function categorizeInterviewQuestion(text) {
+  const value = normalizeText(text);
+  if (/反问|想问|想了解|什么问题|还有问题/.test(value)) return "reverse";
+  if (/实习|项目|负责|职责|成果|数据|指标|困难|挑战|复盘|经历/.test(value)) {
+    return "internship";
+  }
+  if (/自我介绍|介绍一下你自己|介绍自己|为什么投|为什么选择|职业规划|优点|缺点|到岗|意向|学校|专业|个人/.test(value)) {
+    return "personal";
+  }
+  if (/业务|行业|用户|增长|运营|策略|产品|场景|方案|竞品|留存|转化|市场/.test(value)) {
+    return "business";
+  }
+  return "pending";
+}
+
+function extractInterviewQuestions(transcript) {
+  const fragments = String(transcript || "")
+    .replace(/\r/g, "")
+    .replace(/([？?])/g, "$1\n")
+    .split(/\n+|(?<=[。！!])\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const questionCue =
+    /[？?]|自我介绍|请介绍|介绍一下|说说|谈谈|为什么|是什么|怎么|如何|哪些|多少|能否|是否|有没有|你觉得|你认为|举个例子|具体负责|遇到过/;
+  const seen = new Set();
+
+  return fragments
+    .filter((fragment) => questionCue.test(fragment))
+    .filter((fragment) => !/^(候选人|我|应聘者)\s*[：:]/.test(fragment))
+    .map((fragment) => {
+      const originalText = fragment
+        .replace(/^\s*\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*/, "")
+        .trim();
+      const question = originalText
+        .replace(/^(面试官|HR|面试者|说话人\s*\d+|Speaker\s*\d+)\s*[：:]\s*/i, "")
+        .trim();
+      return {
+        id: makeId(),
+        category: categorizeInterviewQuestion(question),
+        question,
+        originalText,
+        followUps: [],
+        confidence: /[？?]/.test(question) ? 0.82 : 0.68,
+      };
+    })
+    .filter((item) => {
+      const key = normalizeText(item.question);
+      if (!key || key.length < 3 || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 40);
+}
+
+function syncInterviewReviewDraftFromEditor() {
+  if (!interviewReviewDraft) return;
+  interviewReviewDraft.transcript =
+    document.getElementById("interviewTranscriptInput").value.trim();
+  interviewReviewDraft.summary =
+    document.getElementById("interviewReviewSummaryInput").value.trim();
+  interviewReviewDraft.questions = [
+    ...document.querySelectorAll("[data-review-question-id]"),
+  ]
+    .map((element) => ({
+      id: element.dataset.reviewQuestionId || makeId(),
+      category: element.querySelector("[data-review-question-category]").value,
+      question: element.querySelector("[data-review-question-text]").value.trim(),
+      originalText: element
+        .querySelector("[data-review-question-original]")
+        .value.trim(),
+      followUps: [],
+      confidence: Number(element.dataset.reviewQuestionConfidence) || 0,
+    }))
+    .filter((item) => item.question);
+}
+
+function renderInterviewReviewEditor() {
+  if (!interviewReviewDraft) return;
+  const questions = interviewReviewDraft.questions || [];
+  const resultSection = document.getElementById("reviewResultSection");
+  resultSection.hidden = questions.length === 0;
+  document.getElementById("reviewQuestionSummary").textContent =
+    `${questions.length} 个问题`;
+
+  const counts = REVIEW_CATEGORIES.map((category) => ({
+    ...category,
+    count: questions.filter((item) => item.category === category.value).length,
+  })).filter((item) => item.count);
+  document.getElementById("reviewCategorySummary").innerHTML = counts
+    .map(
+      (item) => `
+        <span style="--category-color:${item.color}">
+          ${item.label}<strong>${item.count}</strong>
+        </span>
+      `,
+    )
+    .join("");
+
+  document.getElementById("reviewQuestionList").innerHTML = REVIEW_CATEGORIES
+    .map((category) => {
+      const categoryQuestions = questions.filter(
+        (item) => item.category === category.value,
+      );
+      if (!categoryQuestions.length) return "";
+      return `
+        <section class="review-question-group" style="--category-color:${category.color}">
+          <div class="review-question-group-title">
+            <strong>${category.label}</strong>
+            <span>${categoryQuestions.length} 题</span>
+          </div>
+          ${categoryQuestions
+            .map((item) => {
+              const index = questions.findIndex((question) => question.id === item.id);
+              const expanded = expandedReviewQuestionIds.has(item.id);
+              const safeId = escapeHtml(item.id);
+              return `
+                <article
+                  class="review-question-editor ${expanded ? "is-expanded" : ""}"
+                  data-review-question-id="${safeId}"
+                  data-review-question-confidence="${item.confidence || 0}"
+                  style="--category-color:${category.color}"
+                >
+                  <div class="review-question-index">${String(index + 1).padStart(2, "0")}</div>
+                  <button
+                    class="review-question-toggle"
+                    type="button"
+                    data-toggle-review-question="${safeId}"
+                    aria-expanded="${expanded}"
+                    aria-label="编辑第 ${index + 1} 个问题"
+                  >
+                    <span>${escapeHtml(item.question || "待补充问题")}</span>
+                    <i data-lucide="${expanded ? "chevron-up" : "chevron-down"}"></i>
+                  </button>
+                  <button
+                    class="review-question-category-chip"
+                    type="button"
+                    data-toggle-review-question="${safeId}"
+                    aria-expanded="${expanded}"
+                    style="--category-color:${category.color}"
+                  >
+                    ${category.label}
+                  </button>
+                  <button
+                    class="row-action"
+                    type="button"
+                    data-remove-review-question="${safeId}"
+                    aria-label="删除问题"
+                    title="删除问题"
+                  >
+                    <i data-lucide="trash-2"></i>
+                  </button>
+                  <div class="review-question-details" ${expanded ? "" : "hidden"}>
+                    <label class="review-question-category-field">
+                      <span>分类</span>
+                      <select data-review-question-category aria-label="问题分类">
+                        ${REVIEW_CATEGORIES.map(
+                          (option) =>
+                            `<option value="${option.value}" ${option.value === item.category ? "selected" : ""}>${option.label}</option>`,
+                        ).join("")}
+                      </select>
+                    </label>
+                    <label class="review-question-text-field">
+                      <span>整理后问题</span>
+                      <input
+                        data-review-question-text
+                        value="${escapeHtml(item.question)}"
+                        aria-label="整理后的问题"
+                      >
+                    </label>
+                    <label class="review-question-original-field">
+                      <span>原始提问</span>
+                      <textarea data-review-question-original rows="2" aria-label="原始提问">${escapeHtml(item.originalText || item.question)}</textarea>
+                    </label>
+                  </div>
+                </article>
+              `;
+            })
+            .join("")}
+        </section>
+      `;
+    })
+    .join("");
+  refreshIcons();
+}
+
+function openInterviewReviewDialog(applicationId, progressId) {
+  const application = state.applications.find((item) => item.id === applicationId);
+  const progress = application?.progress.find((item) => item.id === progressId);
+  if (!application || !progress || !INTERVIEW_STAGES.has(progress.stage)) {
+    showToast("未找到对应的面试进展");
+    return;
+  }
+  selectedInterviewMedia = null;
+  expandedReviewQuestionIds.clear();
+  const existing = normalizeInterviewReview(progress.interviewReview);
+  interviewReviewDraft = existing || {
+    status: "reviewing",
+    transcript: "",
+    questions: [],
+    summary: progress.review || "",
+    analysisSource: "local",
+    model: "",
+    sourceFileName: "",
+    sourceMimeType: "",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  document.getElementById("reviewApplicationId").value = application.id;
+  document.getElementById("reviewProgressId").value = progress.id;
+  document.getElementById("interviewReviewDialogTitle").textContent =
+    existing ? "查看与编辑复盘" : "整理面试问题";
+  document.getElementById("reviewContext").innerHTML = `
+    <span class="review-context-icon"><i data-lucide="${getStatus(progress.stage).icon}"></i></span>
+    <span>
+      <strong>${escapeHtml(application.company)} · ${escapeHtml(application.role)}</strong>
+      <small>${escapeHtml(application.department || "部门待补充")} · ${getStatus(progress.stage).label} · ${
+        progress.scheduledAt
+          ? escapeHtml(formatReminderDate(progress.scheduledAt))
+          : escapeHtml(formatDate(progress.eventDate, true))
+      }</small>
+    </span>
+  `;
+  document.getElementById("interviewTranscriptInput").value =
+    interviewReviewDraft.transcript;
+  document.getElementById("interviewReviewSummaryInput").value =
+    interviewReviewDraft.summary;
+  document.getElementById("interviewMediaInput").value = "";
+  document.getElementById("interviewMediaStatus").textContent =
+    interviewReviewDraft.sourceFileName
+      ? `${interviewReviewDraft.sourceFileName} · 原文件已释放`
+      : "MP3、M4A、WAV、AAC、MP4、MOV、WebM";
+  setInterviewTranscriptionStatus("", null);
+  setInterviewTranscriptionBusy(false);
+  document.getElementById("reviewAnalysisBadge").textContent =
+    interviewReviewDraft.analysisSource === "ai"
+      ? "AI 已整理"
+      : cloudUser && cloudSyncReady
+        ? "AI 可用"
+        : "本地整理";
+  renderInterviewReviewEditor();
+  openDialog("interviewReviewDialog");
+}
+
+function selectInterviewMedia(file) {
+  if (!file) return;
+  const supported =
+    file.type.startsWith("audio/") ||
+    file.type.startsWith("video/") ||
+    /\.(mp3|m4a|wav|aac|mp4|mov|webm)$/i.test(file.name);
+  if (!supported) {
+    showToast("请选择支持的录音或视频文件");
+    return;
+  }
+  if (file.size > INTERVIEW_MEDIA_MAX_BYTES) {
+    showToast("单个音视频请控制在 200MB 以内");
+    return;
+  }
+  selectedInterviewMedia = file;
+  document.getElementById("interviewMediaStatus").textContent =
+    `${file.name} · ${formatFileSize(file.size)} · 等待转写`;
+  document.getElementById("transcribeInterviewButton").disabled = false;
+  showToast("文件已选择，可以开始转写");
+}
+
+function setInterviewTranscriptionStatus(message, progress = null) {
+  const status = document.getElementById("interviewTranscriptionStatus");
+  const progressBar = document.getElementById("interviewTranscriptionProgress");
+  status.textContent = message;
+  status.hidden = !message;
+  progressBar.hidden = progress === null;
+  if (progress !== null) {
+    progressBar.value = Math.max(0, Math.min(100, Number(progress) || 0));
+  }
+}
+
+function setInterviewTranscriptionBusy(busy) {
+  const transcribeButton = document.getElementById("transcribeInterviewButton");
+  const mediaInput = document.getElementById("interviewMediaInput");
+  transcribeButton.disabled = busy || !selectedInterviewMedia;
+  mediaInput.disabled = busy;
+  document.getElementById("analyzeInterviewButton").disabled = busy;
+  document.getElementById("saveInterviewReviewButton").disabled = busy;
+  document.getElementById("transcribeInterviewButtonLabel").textContent =
+    busy ? "正在转写" : "转写音视频";
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function interviewMediaFormat(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  if (extension === "mp3" || file.type === "audio/mpeg") return "mp3";
+  if (extension === "wav" || /audio\/(wav|x-wav)/.test(file.type)) return "wav";
+  if (extension === "ogg" || file.type === "audio/ogg") return "ogg";
+  return "";
+}
+
+function writeWavString(view, offset, value) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function encodeWav(audioBuffer) {
+  const samples = audioBuffer.getChannelData(0);
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  writeWavString(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeWavString(view, 8, "WAVE");
+  writeWavString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true);
+  view.setUint32(28, 32000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeWavString(view, 36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(
+      44 + index * 2,
+      sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+      true,
+    );
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+async function convertInterviewMediaToWav(file) {
+  setInterviewTranscriptionStatus("正在提取音轨并转换格式", 3);
+  const AudioContextClass = window.AudioContext || window["webkitAudioContext"];
+  if (!AudioContextClass || !window.OfflineAudioContext) {
+    throw new Error("当前浏览器不支持音视频转码，请改用 MP3、WAV 或 OGG");
+  }
+  const audioContext = new AudioContextClass();
+  let decoded;
+  try {
+    decoded = await audioContext.decodeAudioData(await file.arrayBuffer());
+  } catch {
+    throw new Error("无法读取该音视频的音轨，请转换为 MP3 或 WAV 后重试");
+  } finally {
+    await audioContext.close().catch(() => {});
+  }
+  const frameCount = Math.ceil(decoded.duration * 16000);
+  const offlineContext = new OfflineAudioContext(1, frameCount, 16000);
+  const source = offlineContext.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offlineContext.destination);
+  source.start();
+  const rendered = await offlineContext.startRendering();
+  const wav = encodeWav(rendered);
+  if (wav.size > INTERVIEW_MEDIA_MAX_BYTES) {
+    throw new Error("转换后的音频超过 200MB，请压缩或拆分后重试");
+  }
+  const baseName = file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "interview";
+  return new File([wav], `${baseName}.wav`, { type: "audio/wav" });
+}
+
+async function prepareInterviewMedia(file) {
+  const format = interviewMediaFormat(file);
+  if (format) return { file, format };
+  const converted = await convertInterviewMediaToWav(file);
+  return { file: converted, format: "wav" };
+}
+
+function uploadInterviewMedia(file, path) {
+  if (!window.tus?.Upload) {
+    return supabaseClient.storage
+      .from(CLOUD_INTERVIEW_MEDIA_BUCKET)
+      .upload(path, file, {
+        cacheControl: "3600",
+        contentType: file.type,
+        upsert: false,
+      })
+      .then(({ error }) => {
+        if (error) throw error;
+      });
+  }
+  return supabaseClient.auth.getSession().then(({ data, error }) => {
+    const session = data?.session;
+    if (error || !session?.access_token) {
+      throw error || new Error("登录状态已失效，请重新登录");
+    }
+    const config = getCloudConfig();
+    return new Promise((resolve, reject) => {
+      const upload = new window.tus.Upload(file, {
+        endpoint: `${config.url}/storage/v1/upload/resumable`,
+        retryDelays: [0, 3000, 5000, 10000],
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          apikey: config.key,
+        },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        chunkSize: 6 * 1024 * 1024,
+        metadata: {
+          bucketName: CLOUD_INTERVIEW_MEDIA_BUCKET,
+          objectName: path,
+          contentType: file.type,
+          cacheControl: "3600",
+        },
+        onError: reject,
+        onProgress: (uploaded, total) => {
+          const percent = total ? Math.round((uploaded / total) * 100) : 0;
+          setInterviewTranscriptionStatus(`正在上传 ${percent}%`, percent);
+        },
+        onSuccess: resolve,
+      });
+      activeInterviewTranscription.upload = upload;
+      upload.start();
+    });
+  });
+}
+
+async function invokeInterviewTranscription(body) {
+  const { data, error } = await supabaseClient.functions.invoke(
+    CLOUD_INTERVIEW_ASR_FUNCTION,
+    { body },
+  );
+  if (error) throw error;
+  if (!data || typeof data !== "object") {
+    throw new Error("转写服务返回内容无效");
+  }
+  if (data.error) {
+    const messages = {
+      asr_not_configured: "Seed-ASR 尚未配置",
+      asr_not_activated: "Seed-ASR 2.0 尚未开通，请先在火山控制台启用服务",
+      silent_audio: "音视频中没有检测到清晰人声",
+      media_not_found: "临时音频不存在，请重新上传",
+    };
+    throw new Error(messages[data.error] || "音视频转写失败");
+  }
+  return data;
+}
+
+async function cleanupInterviewTranscription(job = activeInterviewTranscription) {
+  if (!job) return;
+  job.cancelled = true;
+  job.upload?.abort?.();
+  activeInterviewTranscription = null;
+  if (job.path && supabaseClient && cloudUser) {
+    await invokeInterviewTranscription({
+      action: "cancel",
+      path: job.path,
+    }).catch(() => {});
+  }
+}
+
+async function transcribeSelectedInterviewMedia() {
+  if (!selectedInterviewMedia) {
+    showToast("请先选择录音或视频");
+    return;
+  }
+  if (!supabaseClient || !cloudUser || !cloudSyncReady) {
+    showToast("登录后才能使用云端音视频转写");
+    return;
+  }
+  const applicationId = document.getElementById("reviewApplicationId").value;
+  const progressId = document.getElementById("reviewProgressId").value;
+  if (!applicationId || !progressId) return;
+
+  const originalFile = selectedInterviewMedia;
+  const job = { path: "", taskId: "", upload: null, cancelled: false };
+  activeInterviewTranscription = job;
+  setInterviewTranscriptionBusy(true);
+  try {
+    const prepared = await prepareInterviewMedia(originalFile);
+    if (job.cancelled) return;
+    const safeApplicationId = applicationId.replace(/[^a-zA-Z0-9_-]/g, "");
+    const safeProgressId = progressId.replace(/[^a-zA-Z0-9_-]/g, "");
+    const extension = prepared.format;
+    job.path =
+      `${cloudUser.id}/${safeApplicationId}_${safeProgressId}_${makeId()}.${extension}`;
+    setInterviewTranscriptionStatus("正在上传 0%", 0);
+    await uploadInterviewMedia(prepared.file, job.path);
+    if (job.cancelled) return;
+
+    setInterviewTranscriptionStatus("已上传，正在提交 Seed-ASR", 100);
+    const started = await invokeInterviewTranscription({
+      action: "start",
+      path: job.path,
+      format: prepared.format,
+    });
+    job.taskId = String(started.taskId || "");
+    if (!job.taskId) throw new Error("转写任务创建失败");
+
+    const deadline = Date.now() + INTERVIEW_ASR_TIMEOUT;
+    let result = null;
+    while (!job.cancelled && Date.now() < deadline) {
+      setInterviewTranscriptionStatus("Seed-ASR 正在识别并区分说话人", null);
+      await wait(INTERVIEW_ASR_POLL_INTERVAL);
+      if (job.cancelled) return;
+      const status = await invokeInterviewTranscription({
+        action: "status",
+        taskId: job.taskId,
+        path: job.path,
+      });
+      if (status.status === "completed") {
+        result = status;
+        break;
+      }
+    }
+    if (!result) throw new Error("转写等待超时，请稍后重新上传");
+    document.getElementById("interviewTranscriptInput").value =
+      String(result.transcript || "");
+    interviewReviewDraft.transcript = String(result.transcript || "");
+    interviewReviewDraft.sourceFileName = originalFile.name;
+    interviewReviewDraft.sourceMimeType = originalFile.type;
+    selectedInterviewMedia = null;
+    activeInterviewTranscription = null;
+    document.getElementById("interviewMediaInput").value = "";
+    document.getElementById("interviewMediaStatus").textContent =
+      `${originalFile.name} · 转写完成，原文件已删除`;
+    setInterviewTranscriptionStatus("转写完成，正在整理问题", null);
+    await analyzeInterviewTranscript();
+    setInterviewTranscriptionStatus("原始音视频已从临时存储删除", null);
+  } catch (error) {
+    console.warn("Interview transcription failed.", error?.message || error);
+    await cleanupInterviewTranscription(job);
+    setInterviewTranscriptionStatus("", null);
+    showToast(error?.message || "音视频转写失败");
+  } finally {
+    if (activeInterviewTranscription === job) {
+      activeInterviewTranscription = null;
+    }
+    setInterviewTranscriptionBusy(false);
+  }
+}
+
+function normalizeAiInterviewQuestions(result) {
+  const normalized = [];
+  const source = Array.isArray(result?.questions) ? result.questions : [];
+  source.forEach((item) => {
+    const category = REVIEW_CATEGORY_MAP[item?.category]
+      ? item.category
+      : "pending";
+    const confidence = Math.max(0, Math.min(1, Number(item?.confidence) || 0));
+    const question = String(item?.question || "").trim();
+    if (question) {
+      normalized.push({
+        id: makeId(),
+        category,
+        question,
+        originalText: String(item?.originalText || question).trim(),
+        followUps: [],
+        confidence,
+      });
+    }
+    if (Array.isArray(item?.followUps)) {
+      item.followUps
+        .map((followUp) => String(followUp || "").trim())
+        .filter(Boolean)
+        .forEach((followUp) => {
+          normalized.push({
+            id: makeId(),
+            category,
+            question: followUp,
+            originalText: followUp,
+            followUps: [],
+            confidence,
+          });
+        });
+    }
+  });
+  return normalized.slice(0, 60);
+}
+
+async function analyzeInterviewTranscriptWithAi(transcript) {
+  if (!supabaseClient || !cloudUser || !cloudSyncReady) return null;
+  const applicationId = document.getElementById("reviewApplicationId").value;
+  const progressId = document.getElementById("reviewProgressId").value;
+  const application = state.applications.find((item) => item.id === applicationId);
+  const progress = application?.progress.find((item) => item.id === progressId);
+  if (!application || !progress) return null;
+
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(
+      () => reject(new Error("AI 整理超时")),
+      CLOUD_INTERVIEW_AI_TIMEOUT,
+    );
+  });
+  const invoke = supabaseClient.functions.invoke(CLOUD_INTERVIEW_AI_FUNCTION, {
+    body: {
+      transcript: transcript.slice(0, 60000),
+      company: application.company,
+      role: application.role,
+      stage: getStatus(progress.stage).label,
+    },
+  });
+
+  try {
+    const { data, error } = await Promise.race([invoke, timeout]);
+    if (error) throw error;
+    if (!data?.result || typeof data.result !== "object") {
+      throw new Error("AI 返回内容无效");
+    }
+    return {
+      questions: normalizeAiInterviewQuestions(data.result),
+      summary: String(data.result.summary || "").trim(),
+      model: String(data.model || ""),
+    };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function analyzeInterviewTranscript() {
+  const transcript = document.getElementById("interviewTranscriptInput").value.trim();
+  if (!transcript) {
+    showToast("请先粘贴面试转写文本");
+    document.getElementById("interviewTranscriptInput").focus();
+    return;
+  }
+  const button = document.getElementById("analyzeInterviewButton");
+  const buttonLabel = document.getElementById("analyzeInterviewButtonLabel");
+  button.disabled = true;
+  buttonLabel.textContent = "正在整理";
+  syncInterviewReviewDraftFromEditor();
+  interviewReviewDraft.transcript = transcript;
+  const localQuestions = extractInterviewQuestions(transcript);
+  let aiResult = null;
+  let aiFailed = false;
+  try {
+    aiResult = await analyzeInterviewTranscriptWithAi(transcript);
+  } catch (error) {
+    aiFailed = true;
+    console.warn("Cloud interview analysis unavailable.", error?.message || error);
+  } finally {
+    button.disabled = false;
+    buttonLabel.textContent = "AI 整理问题";
+  }
+
+  if (aiResult?.questions.length) {
+    interviewReviewDraft.questions = aiResult.questions;
+    interviewReviewDraft.analysisSource = "ai";
+    interviewReviewDraft.model = aiResult.model;
+    if (!interviewReviewDraft.summary && aiResult.summary) {
+      interviewReviewDraft.summary = aiResult.summary;
+      document.getElementById("interviewReviewSummaryInput").value = aiResult.summary;
+    }
+    document.getElementById("reviewAnalysisBadge").textContent = "AI 已整理";
+    showToast(`AI 已整理 ${aiResult.questions.length} 个问题`);
+  } else {
+    interviewReviewDraft.questions = localQuestions;
+    interviewReviewDraft.analysisSource = "local";
+    interviewReviewDraft.model = "";
+    document.getElementById("reviewAnalysisBadge").textContent = "本地整理";
+    if (!interviewReviewDraft.questions.length) {
+      showToast("暂未识别到明确问题，可手动添加");
+      interviewReviewDraft.questions.push({
+        id: makeId(),
+        category: "pending",
+        question: "",
+        originalText: "",
+        followUps: [],
+        confidence: 0,
+      });
+    } else if (!aiResult) {
+      showToast(
+        aiFailed
+          ? `AI 暂时不可用，本地已整理 ${interviewReviewDraft.questions.length} 个问题`
+          : `本地已整理 ${interviewReviewDraft.questions.length} 个候选问题`,
+      );
+    }
+  }
+  document.getElementById("reviewResultSection").hidden = false;
+  expandedReviewQuestionIds.clear();
+  renderInterviewReviewEditor();
+}
+
+function addInterviewQuestion() {
+  if (!interviewReviewDraft) return;
+  syncInterviewReviewDraftFromEditor();
+  const id = makeId();
+  interviewReviewDraft.questions.push({
+    id,
+    category: "pending",
+    question: "",
+    originalText: "",
+    followUps: [],
+    confidence: 0,
+  });
+  expandedReviewQuestionIds.add(id);
+  document.getElementById("reviewResultSection").hidden = false;
+  renderInterviewReviewEditor();
+  document
+    .querySelector(`[data-review-question-id="${id}"] [data-review-question-text]`)
+    ?.focus();
+}
+
+function removeInterviewQuestion(id) {
+  if (!interviewReviewDraft) return;
+  syncInterviewReviewDraftFromEditor();
+  expandedReviewQuestionIds.delete(id);
+  interviewReviewDraft.questions = interviewReviewDraft.questions.filter(
+    (item) => item.id !== id,
+  );
+  renderInterviewReviewEditor();
+}
+
+function toggleInterviewQuestion(id) {
+  if (!interviewReviewDraft) return;
+  syncInterviewReviewDraftFromEditor();
+  if (expandedReviewQuestionIds.has(id)) {
+    expandedReviewQuestionIds.delete(id);
+  } else {
+    expandedReviewQuestionIds.add(id);
+  }
+  renderInterviewReviewEditor();
+  if (expandedReviewQuestionIds.has(id)) {
+    document
+      .querySelector(`[data-review-question-id="${id}"] [data-review-question-text]`)
+      ?.focus();
+  }
+}
+
+function saveInterviewReview() {
+  const applicationId = document.getElementById("reviewApplicationId").value;
+  const progressId = document.getElementById("reviewProgressId").value;
+  const application = state.applications.find((item) => item.id === applicationId);
+  const progress = application?.progress.find((item) => item.id === progressId);
+  if (!application || !progress || !interviewReviewDraft) return;
+
+  syncInterviewReviewDraftFromEditor();
+  if (!interviewReviewDraft.questions.length && !interviewReviewDraft.summary) {
+    showToast("请至少保留一个问题或填写复盘备注");
+    return;
+  }
+  const now = new Date().toISOString();
+  progress.interviewReview = {
+    ...interviewReviewDraft,
+    status: "completed",
+    sourceFileName: interviewReviewDraft.sourceFileName || "",
+    sourceMimeType: interviewReviewDraft.sourceMimeType || "",
+    updatedAt: now,
+  };
+  progress.review =
+    interviewReviewDraft.summary ||
+    progress.review ||
+    `已整理 ${interviewReviewDraft.questions.length} 个面试问题`;
+  application.updatedAt = now;
+  selectedInterviewMedia = null;
+  interviewReviewDraft = null;
+  saveState();
+  closeDialog("interviewReviewDialog");
+  renderAll();
+  showToast("面试复盘已保存");
+}
+
 function renderAll() {
   document
     .querySelector(".app-shell")
@@ -2562,6 +3526,7 @@ function renderAll() {
   if (currentView === "dashboard") renderDashboard();
   if (currentView === "funnel") renderFunnel();
   if (currentView === "applications") renderApplications();
+  if (currentView === "reviews") renderInterviewReviews();
   if (currentView === "companies") renderCompanies();
 }
 
@@ -3631,6 +4596,12 @@ function openProgressDialog(progressId = "") {
     ? formatDateTime(progress.recordedAt)
     : "保存时自动记录";
   document.getElementById("deleteProgressButton").hidden = !progress;
+  const structuredEntry = document.getElementById("structuredReviewEntry");
+  const canOpenStructuredReview =
+    Boolean(progress) && INTERVIEW_STAGES.has(progress.stage);
+  structuredEntry.hidden = !canOpenStructuredReview;
+  document.getElementById("openStructuredReviewLabel").textContent =
+    progress?.interviewReview?.questions?.length ? "查看复盘" : "生成复盘";
   openDialog("progressDialog");
 }
 
@@ -3900,10 +4871,46 @@ function bindEvents() {
     const reminderItem = event.target.closest("[data-reminder-progress]");
     if (reminderItem) {
       editingApplicationId = reminderItem.dataset.reminderApplication;
-      openProgressDialog(reminderItem.dataset.reminderProgress);
       if (reminderItem.dataset.reminderType === "review") {
-        setTimeout(() => document.getElementById("progressReviewInput").focus(), 80);
+        openInterviewReviewDialog(
+          reminderItem.dataset.reminderApplication,
+          reminderItem.dataset.reminderProgress,
+        );
+      } else {
+        openProgressDialog(reminderItem.dataset.reminderProgress);
       }
+      return;
+    }
+    const reviewFilterButton = event.target.closest("[data-review-filter]");
+    if (reviewFilterButton) {
+      interviewReviewFilter = reviewFilterButton.dataset.reviewFilter;
+      document.querySelectorAll("[data-review-filter]").forEach((button) => {
+        button.classList.toggle("is-active", button === reviewFilterButton);
+      });
+      renderInterviewReviews();
+      return;
+    }
+    const reviewItem = event.target.closest("[data-open-review-progress]");
+    if (reviewItem) {
+      if (reviewItem.dataset.reviewStatus === "upcoming") {
+        editingApplicationId = reviewItem.dataset.openReviewApp;
+        openProgressDialog(reviewItem.dataset.openReviewProgress);
+      } else {
+        openInterviewReviewDialog(
+          reviewItem.dataset.openReviewApp,
+          reviewItem.dataset.openReviewProgress,
+        );
+      }
+      return;
+    }
+    const removeReviewQuestion = event.target.closest("[data-remove-review-question]");
+    if (removeReviewQuestion) {
+      removeInterviewQuestion(removeReviewQuestion.dataset.removeReviewQuestion);
+      return;
+    }
+    const toggleReviewQuestion = event.target.closest("[data-toggle-review-question]");
+    if (toggleReviewQuestion) {
+      toggleInterviewQuestion(toggleReviewQuestion.dataset.toggleReviewQuestion);
       return;
     }
     const funnelFilter = event.target.closest("[data-funnel-filter]");
@@ -4015,6 +5022,11 @@ function bindEvents() {
     const statusSelect = event.target.closest("[data-status-id]");
     if (statusSelect) {
       updateApplicationStatus(statusSelect.dataset.statusId, statusSelect.value);
+      return;
+    }
+    if (event.target.matches("[data-review-question-category]")) {
+      syncInterviewReviewDraftFromEditor();
+      renderInterviewReviewEditor();
     }
   });
 
@@ -4091,6 +5103,29 @@ function bindEvents() {
   document
     .getElementById("deleteProgressButton")
     .addEventListener("click", deleteCurrentProgress);
+  document.getElementById("openStructuredReviewButton").addEventListener("click", () => {
+    const progressId = document.getElementById("progressIdInput").value;
+    const applicationId = editingApplicationId;
+    closeDialog("progressDialog");
+    openInterviewReviewDialog(applicationId, progressId);
+  });
+
+  document.getElementById("interviewMediaInput").addEventListener("change", (event) => {
+    selectInterviewMedia(event.target.files[0]);
+  });
+  document
+    .getElementById("transcribeInterviewButton")
+    .addEventListener("click", transcribeSelectedInterviewMedia);
+  document
+    .getElementById("analyzeInterviewButton")
+    .addEventListener("click", analyzeInterviewTranscript);
+  document
+    .getElementById("addInterviewQuestionButton")
+    .addEventListener("click", addInterviewQuestion);
+  document.getElementById("interviewReviewForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveInterviewReview();
+  });
 
   const bindJdDropzone = (dropzoneId, inputId, context) => {
     const dropzone = document.getElementById(dropzoneId);
@@ -4287,6 +5322,12 @@ function bindEvents() {
         capturePendingJdImages = [];
         captureDraft = null;
         if (sourceWasImage) clearQuickCaptureImage();
+      }
+      if (dialog.id === "interviewReviewDialog") {
+        cleanupInterviewTranscription();
+        selectedInterviewMedia = null;
+        interviewReviewDraft = null;
+        document.getElementById("interviewMediaInput").value = "";
       }
     });
     dialog.addEventListener("click", (event) => {

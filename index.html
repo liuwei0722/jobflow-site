@@ -6,7 +6,7 @@
     <meta name="description" content="OfferFlow 秋招投递记录、面试提醒与复盘管理工具">
     <title>OfferFlow · 秋招进度管理</title>
     <link rel="preconnect" href="https://unpkg.com">
-    <link rel="stylesheet" href="./styles.css?v=18">
+    <link rel="stylesheet" href="./styles.css?v=23">
   </head>
   <body>
     <div class="app-shell">
@@ -51,6 +51,11 @@
           <button class="nav-item" type="button" data-view="funnel">
             <i data-lucide="git-branch"></i>
             <span>漏斗</span>
+          </button>
+          <button class="nav-item" type="button" data-view="reviews">
+            <i data-lucide="clipboard-pen-line"></i>
+            <span>面试复盘</span>
+            <span class="nav-count" id="reviewNavCount" hidden>0</span>
           </button>
           <button class="nav-item" type="button" data-view="companies">
             <i data-lucide="building-2"></i>
@@ -246,6 +251,27 @@
           </div>
         </section>
 
+        <section class="view" id="view-reviews">
+          <div class="review-summary-band" id="reviewSummaryBand"></div>
+
+          <div class="section-toolbar review-toolbar">
+            <div class="segmented-control" id="interviewReviewFilters" aria-label="复盘状态">
+              <button class="is-active" type="button" data-review-filter="all">全部</button>
+              <button type="button" data-review-filter="pending">待复盘</button>
+              <button type="button" data-review-filter="completed">已复盘</button>
+              <button type="button" data-review-filter="upcoming">待面试</button>
+            </div>
+            <span class="review-toolbar-note" id="reviewResultCount">0 场面试</span>
+          </div>
+
+          <div class="interview-review-list" id="interviewReviewList"></div>
+          <div class="empty-state" id="interviewReviewEmpty" hidden>
+            <i data-lucide="clipboard-pen-line"></i>
+            <h3>暂无面试记录</h3>
+            <p>岗位进入一面、二面或终面后，会自动汇总到这里。</p>
+          </div>
+        </section>
+
         <section class="view" id="view-companies">
           <div class="company-toolbar">
             <div class="search-field">
@@ -285,6 +311,11 @@
       <button type="button" data-view="funnel">
         <i data-lucide="git-branch"></i>
         <span>漏斗</span>
+      </button>
+      <button type="button" data-view="reviews">
+        <i data-lucide="clipboard-pen-line"></i>
+        <span>复盘</span>
+        <span class="mobile-nav-count" id="mobileReviewNavCount" hidden>0</span>
       </button>
       <button type="button" data-view="companies">
         <i data-lucide="building-2"></i>
@@ -521,6 +552,16 @@
               <span>面试评价 / 复盘</span>
               <textarea id="progressReviewInput" rows="5" placeholder="记录面试问题、表现评价和下一次改进动作；填写后复盘待办会自动完成"></textarea>
             </label>
+            <div class="form-span structured-review-entry" id="structuredReviewEntry" hidden>
+              <span>
+                <strong>结构化面试复盘</strong>
+                <small>整理录音转写中的面试问题</small>
+              </span>
+              <button class="button secondary" type="button" id="openStructuredReviewButton">
+                <i data-lucide="audio-lines"></i>
+                <span id="openStructuredReviewLabel">生成复盘</span>
+              </button>
+            </div>
             <label class="form-span readonly-field">
               <span>记录时间</span>
               <input id="progressRecordedAtInput" readonly>
@@ -534,6 +575,104 @@
           </button>
           <button class="button ghost" type="button" data-close-dialog="progressDialog">取消</button>
           <button class="button primary" type="submit">保存进展</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal wide-modal interview-review-modal" id="interviewReviewDialog">
+      <form method="dialog" id="interviewReviewForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">面试复盘</p>
+            <h2 id="interviewReviewDialogTitle">整理面试问题</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="interviewReviewDialog" aria-label="关闭" title="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <input id="reviewApplicationId" type="hidden">
+          <input id="reviewProgressId" type="hidden">
+
+          <div class="review-context" id="reviewContext"></div>
+
+          <section class="review-source-section">
+            <div class="review-source-heading">
+              <div>
+                <h3>转写来源</h3>
+                <p>登录后可用 Seed-ASR 转写，也可直接粘贴并修正转写文本。</p>
+              </div>
+              <span class="review-local-badge" id="reviewAnalysisBadge">本地整理</span>
+            </div>
+            <div class="review-source-grid">
+              <label class="review-media-picker" for="interviewMediaInput">
+                <i data-lucide="file-audio"></i>
+                <span>
+                  <strong>选择录音或视频</strong>
+                  <small id="interviewMediaStatus">MP3、M4A、WAV、AAC、MP4、MOV、WebM</small>
+                </span>
+                <input
+                  class="review-media-input"
+                  id="interviewMediaInput"
+                  type="file"
+                  aria-label="选择录音或视频"
+                  accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/aac,video/mp4,video/quicktime,video/webm,.mp3,.m4a,.wav,.aac,.mp4,.mov,.webm"
+                >
+              </label>
+              <label class="review-transcript-field">
+                <span>转写文本</span>
+                <textarea id="interviewTranscriptInput" rows="8" placeholder="粘贴带有面试官提问的转写文本"></textarea>
+              </label>
+            </div>
+            <div class="review-transcription-state">
+              <progress id="interviewTranscriptionProgress" max="100" value="0" hidden></progress>
+              <span id="interviewTranscriptionStatus" role="status" aria-live="polite" hidden></span>
+            </div>
+            <div class="review-source-actions">
+              <span><i data-lucide="shield-check"></i>音视频仅临时加密存放，处理结束后自动删除</span>
+              <div class="review-source-buttons">
+                <button class="button secondary" type="button" id="transcribeInterviewButton" disabled>
+                  <i data-lucide="audio-lines"></i>
+                  <span id="transcribeInterviewButtonLabel">转写音视频</span>
+                </button>
+                <button class="button primary" type="button" id="analyzeInterviewButton">
+                  <i data-lucide="list-filter"></i>
+                  <span id="analyzeInterviewButtonLabel">AI 整理问题</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="review-result-section" id="reviewResultSection" hidden>
+            <div class="review-result-heading">
+              <div>
+                <h3>问题清单</h3>
+                <p id="reviewQuestionSummary">0 个问题</p>
+              </div>
+              <button
+                class="icon-button"
+                type="button"
+                id="addInterviewQuestionButton"
+                aria-label="添加问题"
+                title="添加问题"
+              >
+                <i data-lucide="plus"></i>
+              </button>
+            </div>
+            <div class="review-category-summary" id="reviewCategorySummary"></div>
+            <div class="review-question-list" id="reviewQuestionList"></div>
+            <label class="review-summary-field">
+              <span>本场复盘备注</span>
+              <textarea id="interviewReviewSummaryInput" rows="3" placeholder="补充本场重点、薄弱点或后续准备方向"></textarea>
+            </label>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button class="button ghost" type="button" data-close-dialog="interviewReviewDialog">取消</button>
+          <button class="button primary" type="submit" id="saveInterviewReviewButton">
+            <i data-lucide="check"></i>
+            保存复盘
+          </button>
         </div>
       </form>
     </dialog>
@@ -653,7 +792,8 @@
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
     <script src="https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4/dist/tus.min.js"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=23"></script>
+    <script src="./app.js?v=27"></script>
   </body>
 </html>

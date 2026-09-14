@@ -280,6 +280,7 @@ const VIEW_META = {
   funnel: { eyebrow: "阶段转化分析", title: "漏斗" },
   applications: { eyebrow: "全流程管理", title: "投递管理" },
   reviews: { eyebrow: "面试经验沉淀", title: "面试复盘" },
+  fairs: { eyebrow: "招聘活动日程", title: "双选会" },
   companies: { eyebrow: "目标公司库", title: "公司导航" },
 };
 
@@ -490,7 +491,7 @@ function migrateState(raw) {
     ? raw.applications.map(normalizeApplication)
     : [];
   return {
-    version: 5,
+    version: 6,
     account: raw.account && typeof raw.account === "object" ? raw.account : { email: "" },
     settings: {
       interviewNotifications: Boolean(raw.settings?.interviewNotifications),
@@ -499,6 +500,10 @@ function migrateState(raw) {
         : [],
     },
     applications,
+    fairPlans:
+      raw.fairPlans && typeof raw.fairPlans === "object" && !Array.isArray(raw.fairPlans)
+        ? raw.fairPlans
+        : {},
     legacyEvents: Array.isArray(raw.legacyEvents)
       ? raw.legacyEvents
       : Array.isArray(raw.events)
@@ -541,13 +546,14 @@ function makeDemoApplication(config) {
 
 function buildDemoState() {
   return {
-    version: 5,
+    version: 6,
     account: { email: "" },
     settings: {
       interviewNotifications: false,
       notificationHistory: [],
     },
     legacyEvents: [],
+    fairPlans: {},
     applications: [
       makeDemoApplication({
         company: "字节跳动",
@@ -679,7 +685,7 @@ function buildDemoState() {
 
 function buildEmptyState(email = "") {
   return {
-    version: 5,
+    version: 6,
     account: { email },
     settings: {
       interviewNotifications: false,
@@ -687,6 +693,7 @@ function buildEmptyState(email = "") {
     },
     legacyEvents: [],
     applications: [],
+    fairPlans: {},
   };
 }
 
@@ -717,7 +724,7 @@ function cloudPendingStorageKey(userId = cloudUser?.id) {
 }
 
 function saveState() {
-  state.version = 5;
+  state.version = 6;
   if (cloudUser?.email) state.account = { email: cloudUser.email };
   localStorage.setItem(cloudStateStorageKey(), JSON.stringify(state));
   if (cloudUser && cloudSyncReady) {
@@ -747,7 +754,7 @@ function setCloudStatus(status, message = "") {
 
 function serializableCloudState() {
   const snapshot = JSON.parse(JSON.stringify(state));
-  snapshot.version = 5;
+  snapshot.version = 6;
   snapshot.account = { email: cloudUser?.email || "" };
   return snapshot;
 }
@@ -1026,6 +1033,9 @@ async function clearCurrentCloudWorkspace() {
   const applicationIds = state.applications.map((application) => application.id);
   setCloudStatus("syncing", "正在清空当前账户");
   try {
+    if (typeof window.clearFairPlans === "function") {
+      await window.clearFairPlans();
+    }
     await clearAssetDb(applicationIds);
     state = buildEmptyState(cloudUser.email || "");
     saveState();
@@ -1758,6 +1768,8 @@ function switchView(view, options = {}) {
     renderFunnel();
   } else if (view === "reviews") {
     renderInterviewReviews();
+  } else if (view === "fairs") {
+    window.renderFairs?.();
   } else {
     renderDashboard();
   }
@@ -1958,7 +1970,7 @@ function formatClock(value) {
 }
 
 function getCalendarScheduleEvents() {
-  return state.applications.flatMap((application) =>
+  const applicationEvents = state.applications.flatMap((application) =>
     getProgress(application)
       .filter(
         (progress) =>
@@ -1984,11 +1996,16 @@ function getCalendarScheduleEvents() {
       })
       .filter((item) => !Number.isNaN(item.start.getTime())),
   );
+  const fairEvents =
+    typeof window.getFairCalendarEvents === "function"
+      ? window.getFairCalendarEvents()
+      : [];
+  return [...applicationEvents, ...fairEvents];
 }
 
 function getInterviewScheduleEvents() {
   return getCalendarScheduleEvents().filter((event) =>
-    INTERVIEW_STAGES.has(event.progress.stage),
+    event.progress && INTERVIEW_STAGES.has(event.progress.stage),
   );
 }
 
@@ -2002,8 +2019,13 @@ function markCalendarAttention(events) {
       const current = sorted[index];
       const other = sorted[otherIndex];
       const gap = other.start.getTime() - current.end.getTime();
-      if (gap > 30 * 60000) break;
-      if (gap <= 30 * 60000) {
+      const attentionMinutes = Math.max(
+        30,
+        Number(current.transferMinutes || 0),
+        Number(other.transferMinutes || 0),
+      );
+      if (gap > attentionMinutes * 60000) break;
+      if (gap <= attentionMinutes * 60000) {
         current.conflict = true;
         other.conflict = true;
       }
@@ -2073,6 +2095,27 @@ function renderInterviewCalendar() {
     return `--event-top:${top.toFixed(2)}%;--event-height:${Math.round(height)}px`;
   };
   const renderCalendarEvent = (event) => {
+    if (event.kind === "fair") {
+      const time = `${formatClock(event.start)}-${formatClock(event.end)}`;
+      return `
+        <button
+          class="calendar-event fair-calendar-event ${event.conflict ? "has-conflict" : ""}"
+          type="button"
+          data-calendar-fair="${event.fair.id}"
+          style="--event-color:#168C78;${eventStyle(event)}"
+          title="${escapeHtml(time)} · ${escapeHtml(event.fair.title)} · 双选会"
+        >
+          <span class="calendar-event-primary">
+            <time>${escapeHtml(time)}</time>
+            <strong>${escapeHtml(event.fair.school || event.fair.publisher || "双选会")}</strong>
+          </span>
+          <span class="calendar-event-secondary">
+            <span>${escapeHtml(event.fair.title)}</span>
+            <em>双选会</em>
+          </span>
+        </button>
+      `;
+    }
     const status = getStatus(event.progress.stage);
     const time = formatCalendarEventTime(event);
     return `
@@ -3527,6 +3570,7 @@ function renderAll() {
   if (currentView === "funnel") renderFunnel();
   if (currentView === "applications") renderApplications();
   if (currentView === "reviews") renderInterviewReviews();
+  if (currentView === "fairs") window.renderFairs?.();
   if (currentView === "companies") renderCompanies();
 }
 
@@ -4843,6 +4887,9 @@ function mergeImportedState(imported) {
     if (!current || String(item.updatedAt) > String(current.updatedAt)) map.set(item.id, item);
   });
   state.applications = [...map.values()];
+  if (migrated.fairPlans && typeof migrated.fairPlans === "object") {
+    state.fairPlans = { ...(state.fairPlans || {}), ...migrated.fairPlans };
+  }
   saveState();
   renderAll();
 }
@@ -5302,7 +5349,7 @@ function bindEvents() {
     if (!cloudUser) return;
     confirmAction(
       "清空当前云端工作区",
-      `确认永久删除 ${cloudUser.email} 的全部岗位、进展和 JD 截图吗？其他邮箱不受影响。`,
+      `确认永久删除 ${cloudUser.email} 的全部岗位、进展、双选会计划和 JD 截图吗？其他邮箱不受影响。`,
       clearCurrentCloudWorkspace,
     );
   });

@@ -7,6 +7,7 @@
     <title>OfferFlow · 秋招进度管理</title>
     <link rel="preconnect" href="https://unpkg.com">
     <link rel="stylesheet" href="./styles.css?v=23">
+    <link rel="stylesheet" href="./fair.css?v=1">
   </head>
   <body>
     <div class="app-shell">
@@ -56,6 +57,10 @@
             <i data-lucide="clipboard-pen-line"></i>
             <span>面试复盘</span>
             <span class="nav-count" id="reviewNavCount" hidden>0</span>
+          </button>
+          <button class="nav-item" type="button" data-view="fairs">
+            <i data-lucide="calendar-search"></i>
+            <span>双选会</span>
           </button>
           <button class="nav-item" type="button" data-view="companies">
             <i data-lucide="building-2"></i>
@@ -272,6 +277,97 @@
           </div>
         </section>
 
+        <section class="view fair-view" id="view-fairs">
+          <div class="fair-intro">
+            <p>提前查看未来一至两个月的招聘会，筛选场次并安排参会日程。</p>
+            <button class="button ghost" type="button" id="fairSourceButton">
+              <i data-lucide="radio-tower"></i>
+              <span id="fairSourceSummary">检查采集状态</span>
+            </button>
+          </div>
+
+          <div class="fair-tabs" role="tablist" aria-label="双选会分类">
+            <button class="is-active" type="button" role="tab" data-fair-tab="offline">北京线下</button>
+            <button type="button" role="tab" data-fair-tab="online">线上会场</button>
+            <button type="button" role="tab" data-fair-tab="schedule">我的日程</button>
+            <button type="button" role="tab" data-fair-tab="hidden">已隐藏</button>
+          </div>
+
+          <div class="fair-toolbar">
+            <div class="search-field fair-search">
+              <i data-lucide="search"></i>
+              <input id="fairSearchInput" type="search" placeholder="搜索活动、学校、企业或地点" aria-label="搜索双选会">
+            </div>
+            <div class="fair-toolbar-controls">
+              <label class="fair-school-picker">
+                <span class="sr-only">添加学校筛选</span>
+                <input id="fairSchoolInput" list="fairSchoolOptions" placeholder="添加学校">
+                <datalist id="fairSchoolOptions"></datalist>
+              </label>
+              <select id="fairDistrictFilter" aria-label="按区域筛选">
+                <option value="">全部区域</option>
+              </select>
+              <select id="fairScopeFilter" aria-label="按层级筛选">
+                <option value="">全部层级</option>
+                <option value="国家级">国家级</option>
+                <option value="省级">省级</option>
+                <option value="市级">市级</option>
+                <option value="区级">区级</option>
+                <option value="高校级">高校级</option>
+                <option value="企业专场">企业专场</option>
+                <option value="层级待核实">待核实</option>
+              </select>
+              <select id="fairEligibilityFilter" aria-label="按入场条件筛选">
+                <option value="">全部入场条件</option>
+                <option value="open">外校可参加</option>
+                <option value="restricted">本校或有限制</option>
+                <option value="unknown">待核实</option>
+              </select>
+              <div class="segmented-control fair-range-control" aria-label="日期范围">
+                <button class="is-active" type="button" data-fair-range="1">1 个月</button>
+                <button type="button" data-fair-range="2">2 个月</button>
+              </div>
+            </div>
+            <div class="fair-school-chips" id="fairSchoolChips"></div>
+          </div>
+
+          <div class="fair-view-controls">
+            <div class="segmented-control" aria-label="展示方式">
+              <button class="is-active" type="button" data-fair-layout="week">周列表</button>
+              <button type="button" data-fair-layout="month">月历</button>
+              <button type="button" data-fair-layout="list">连续列表</button>
+            </div>
+            <div class="fair-week-nav" id="fairWeekNav">
+              <button class="icon-button" type="button" data-fair-week="-1" aria-label="上一周" title="上一周"><i data-lucide="chevron-left"></i></button>
+              <button class="button ghost" type="button" data-fair-week="0">本周</button>
+              <button class="icon-button" type="button" data-fair-week="1" aria-label="下一周" title="下一周"><i data-lucide="chevron-right"></i></button>
+            </div>
+            <span id="fairResultSummary">正在读取活动</span>
+          </div>
+
+          <div class="fair-layout">
+            <div class="fair-main">
+              <div class="fair-state" id="fairState" hidden></div>
+              <div class="fair-list" id="fairList"></div>
+            </div>
+            <aside class="fair-aside">
+              <section>
+                <div class="fair-aside-heading">
+                  <h2>我的本周安排</h2>
+                  <button class="icon-button" type="button" id="fairExportIcsButton" aria-label="导出参会日程" title="导出参会日程">
+                    <i data-lucide="calendar-arrow-down"></i>
+                  </button>
+                </div>
+                <div id="fairWeekSchedule"></div>
+              </section>
+              <section>
+                <h2>提醒与变更</h2>
+                <div id="fairAlerts"></div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
         <section class="view" id="view-companies">
           <div class="company-toolbar">
             <div class="search-field">
@@ -317,11 +413,118 @@
         <span>复盘</span>
         <span class="mobile-nav-count" id="mobileReviewNavCount" hidden>0</span>
       </button>
+      <button type="button" data-view="fairs">
+        <i data-lucide="calendar-search"></i>
+        <span>双选会</span>
+      </button>
       <button type="button" data-view="companies">
         <i data-lucide="building-2"></i>
         <span>公司</span>
       </button>
     </nav>
+
+    <div class="fair-compare-bar" id="fairCompareBar" hidden>
+      <div>
+        <strong id="fairCompareLabel">已选 1/3，再选 1 场即可对比</strong>
+        <div id="fairCompareItems"></div>
+      </div>
+      <div class="fair-compare-actions">
+        <button class="button ghost" type="button" id="fairCompareClearButton">清空</button>
+        <button class="button primary" type="button" id="fairCompareOpenButton" disabled>对比活动</button>
+      </div>
+    </div>
+
+    <dialog class="modal fair-detail-dialog" id="fairDetailDialog">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">双选会详情</p>
+          <h2 id="fairDetailTitle">活动详情</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="fairDetailDialog" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="fairDetailBody"></div>
+    </dialog>
+
+    <dialog class="modal compact-modal fair-plan-dialog" id="fairPlanDialog">
+      <form method="dialog" id="fairPlanForm">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">个人安排</p>
+            <h2 id="fairPlanTitle">编辑参会计划</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="fairPlanDialog" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body">
+          <input id="fairPlanId" type="hidden">
+          <label class="stacked-field">
+            <span>状态</span>
+            <select id="fairPlanState">
+              <option value="saved">已收藏</option>
+              <option value="planned">计划参加</option>
+              <option value="attended">已参加</option>
+              <option value="skipped">不参加</option>
+            </select>
+          </label>
+          <label class="fair-check-row">
+            <input id="fairPlanRegistered" type="checkbox">
+            <span>我已在官网预约</span>
+          </label>
+          <div class="form-grid">
+            <label>
+              <span>日期</span>
+              <input id="fairPlanDate" type="date" required>
+            </label>
+            <label>
+              <span>结束日期</span>
+              <input id="fairPlanEndDate" type="date" required>
+            </label>
+            <label>
+              <span>开始时间</span>
+              <input id="fairPlanStartTime" type="time">
+            </label>
+            <label>
+              <span>结束时间</span>
+              <input id="fairPlanEndTime" type="time">
+            </label>
+            <label>
+              <span>转场预留（分钟）</span>
+              <input id="fairPlanTransfer" type="number" min="0" max="360" step="15" value="60">
+            </label>
+          </div>
+          <label class="stacked-field">
+            <span>备注</span>
+            <textarea id="fairPlanNote" rows="4" maxlength="2000" placeholder="准备材料、关注企业或交通安排"></textarea>
+          </label>
+          <p class="fair-form-note">“已预约”仅记录个人状态，不会代替你向官网提交报名。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="button ghost" type="button" data-close-dialog="fairPlanDialog">取消</button>
+          <button class="button primary" type="submit"><i data-lucide="check"></i>保存计划</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal wide-modal fair-compare-dialog" id="fairCompareDialog">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">场次比较</p>
+          <h2>双选会对比</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="fairCompareDialog" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="fairCompareBody"></div>
+    </dialog>
+
+    <dialog class="modal wide-modal fair-source-dialog" id="fairSourceDialog">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">采集透明度</p>
+          <h2>来源状态</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="fairSourceDialog" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" id="fairSourceBody"></div>
+    </dialog>
 
     <dialog class="modal wide-modal application-editor-modal" id="applicationDialog">
       <form method="dialog" id="applicationForm">
@@ -794,6 +997,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4/dist/tus.min.js"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=27"></script>
+    <script src="./app.js?v=28"></script>
+    <script src="./fair.js?v=1"></script>
   </body>
 </html>

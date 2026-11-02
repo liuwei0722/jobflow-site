@@ -6,11 +6,20 @@
     <meta name="description" content="OfferFlow 秋招投递记录、面试提醒与复盘管理工具">
     <title>OfferFlow · 秋招进度管理</title>
     <link rel="preconnect" href="https://unpkg.com">
-    <link rel="stylesheet" href="./styles.css?v=23">
-    <link rel="stylesheet" href="./fair.css?v=1">
+    <link rel="stylesheet" href="./styles.css?v=24">
+    <link rel="stylesheet" href="./fair.css?v=2">
   </head>
   <body>
-    <div class="app-shell">
+    <main class="auth-gate" id="authGate">
+      <h1>OfferFlow</h1>
+      <p id="authGateMessage" role="status">正在验证登录状态。</p>
+      <div class="auth-gate-actions">
+        <button class="button primary" type="button" id="authGateLoginButton">邮箱登录</button>
+        <button class="button ghost" type="button" id="authGateThemeButton">切换主题</button>
+      </div>
+      <noscript>请启用 JavaScript 后使用邮箱登录。</noscript>
+    </main>
+    <div class="app-shell" hidden>
       <header class="topbar">
         <button class="top-brand" type="button" data-view="dashboard" aria-label="OfferFlow 首页">
           <span class="brand-mark" aria-hidden="true">
@@ -395,7 +404,7 @@
       </main>
     </div>
 
-    <nav class="mobile-nav" aria-label="移动端导航">
+    <nav class="mobile-nav" aria-label="移动端导航" hidden>
       <button class="is-active" type="button" data-view="dashboard">
         <i data-lucide="layout-dashboard"></i>
         <span>总览</span>
@@ -997,7 +1006,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4/dist/tus.min.js"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=28"></script>
-    <script src="./fair.js?v=1"></script>
+    <script src="./app.js?v=29"></script>
+    <script src="./fair.js?v=5"></script>
   </body>
 </html>

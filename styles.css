@@ -214,6 +214,30 @@
   display: none !important;
 }
 
+.auth-gate {
+  width: min(440px, calc(100% - 40px));
+  margin: 18vh auto 40px;
+  color: var(--text);
+}
+
+.auth-gate h1 {
+  margin: 0 0 12px;
+  font-size: 24px;
+}
+
+.auth-gate p {
+  color: var(--text-soft);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.auth-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 html {
   min-width: 320px;
   background: var(--bg);

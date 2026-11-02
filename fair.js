@@ -81,6 +81,7 @@
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "尚无";
     return new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai",
       month: "numeric",
       day: "numeric",
       hour: "2-digit",
@@ -100,14 +101,23 @@
     return state.fairPlans;
   }
 
+  function relatedFairIds(fairId) {
+    const fair = fairUi.fairs.find((item) => item.id === fairId || item.relatedIds?.includes(fairId)) ||
+      fairUi.detailCache.get(fairId) || currentPlans()[fairId]?.fair;
+    return [...new Set([fairId, ...(fair?.relatedIds || [])])];
+  }
+
   function planFor(fairId) {
-    return currentPlans()[fairId] || null;
+    const plans = currentPlans();
+    return relatedFairIds(fairId).map((id) => plans[id]).filter(Boolean)
+      .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) ||
+        String(a.fairId).localeCompare(String(b.fairId)))[0] || null;
   }
 
   function fairFor(fairId) {
     return (
       fairUi.detailCache.get(fairId) ||
-      fairUi.fairs.find((item) => item.id === fairId) ||
+      fairUi.fairs.find((item) => item.id === fairId || item.relatedIds?.includes(fairId)) ||
       planFor(fairId)?.fair ||
       null
     );
@@ -202,11 +212,10 @@
     const district = document.getElementById("fairDistrictFilter")?.value || "";
     const scope = document.getElementById("fairScopeFilter")?.value || "";
     const eligibility = document.getElementById("fairEligibilityFilter")?.value || "";
-    const plans = currentPlans();
     const hiddenTab = fairUi.tab === "hidden";
     return fairUi.fairs
       .filter((fair) => {
-        const plan = plans[fair.id]?.payload || {};
+        const plan = planFor(fair.id)?.payload || {};
         if (fairUi.tab === "schedule") return plan.state && plan.state !== "none";
         if (hiddenTab) return Boolean(plan.hidden);
         if (plan.hidden) return false;
@@ -271,6 +280,7 @@
 
   function companiesLabel(fair) {
     const labels = {
+      unsupported: "企业名单暂未接入",
       unpublished: "企业名单待公布",
       partial: `部分名单${fair.companyCount ? ` · ${fair.companyCount} 家` : ""}`,
       published: `名单已公布${fair.companyCount ? ` · ${fair.companyCount} 家` : ""}`,
@@ -305,6 +315,8 @@
             <span>${escapeHtml(fair.eligibility || "入场条件待核实")}</span>
             <span>${escapeHtml(fair.studentDeadline || "学生预约截止待公布")}</span>
             <span>${escapeHtml(companiesLabel(fair))}</span>
+            <span class="fair-checked-at">最近核实 ${escapeHtml(formatCheckedAt(fair.checkedAt))}</span>
+            ${fair.sources?.length > 1 ? `<span>${fair.sources.length} 个来源</span>` : ""}
             ${plan.state && plan.state !== "none" ? `<span class="fair-plan-state">${escapeHtml(PLAN_STATES[plan.state])}</span>` : ""}
             ${issue ? `<span class="fair-issue">${escapeHtml(issue)}</span>` : ""}
           </div>
@@ -418,7 +430,13 @@
   }
 
   function plannedItems() {
-    return Object.values(currentPlans())
+    const seen = new Set();
+    return Object.keys(currentPlans()).map((id) => {
+      const entry = planFor(id);
+      if (!entry || seen.has(entry.fairId)) return null;
+      seen.add(entry.fairId);
+      return { ...entry, fair: fairFor(entry.fairId) || entry.fair };
+    })
       .filter((entry) => entry?.payload?.state === "planned" && entry.fair)
       .sort((a, b) =>
         `${a.payload.date || a.fair.date}${a.payload.startTime || ""}`.localeCompare(
@@ -463,7 +481,7 @@
         }),
     );
     const fairIntervals = plannedItems()
-      .filter((entry) => entry.fairId !== excludeFairId)
+      .filter((entry) => !relatedFairIds(excludeFairId).includes(entry.fairId))
       .map((entry) => {
         const interval = getPlanInterval(entry);
         return interval
@@ -553,18 +571,58 @@
       : '<p class="fair-empty-date">暂无临近提醒或待确认变更</p>';
   }
 
+  function sourceStatus(source, now = Date.now()) {
+    if (source.enabled === false || (source.enabled !== true && source.status === "待适配")) {
+      return { kind: "pending", label: "尚未接入", className: "is-warning" };
+    }
+    if (source.status === "暂时异常") {
+      return { kind: "error", label: "最近更新失败", className: "is-error" };
+    }
+    if (!source.lastSuccessAt) {
+      return { kind: "waiting", label: "等待首次采集", className: "is-warning" };
+    }
+    const lastSuccess = new Date(source.lastSuccessAt).getTime();
+    if (!Number.isFinite(lastSuccess) || now - lastSuccess > 26 * 3600000) {
+      return { kind: "warning", label: "超过一天未成功更新", className: "is-warning" };
+    }
+    const onlyUnsupportedCompanies = /^企业名单接口未接入[^;]*$/.test(source.errorSummary || "");
+    if (source.status === "部分异常" && !onlyUnsupportedCompanies) {
+      return { kind: "warning", label: "活动信息更新不完整", className: "is-warning" };
+    }
+    return { kind: "ok", label: "活动已更新", className: "is-ok" };
+  }
+
+  function sourceErrorLabel(value) {
+    if (/HTTP 403|source_http_403/.test(value || "")) return "来源网站拒绝访问（403）";
+    if (/timeout|timed out|time budget/i.test(value || "")) return "来源请求超时，本轮未完成";
+    if (/source network request failed|source_network_error/.test(value || "")) return "来源网站连接失败，本轮未完成";
+    if (/^企业名单接口未接入[^;]*$/.test(value || "")) return "";
+    return value || "";
+  }
+
   function renderSourceSummary() {
-    const active = fairUi.sources.filter((item) => item.status === "已接入").length;
-    const abnormal = fairUi.sources.filter((item) => ["部分异常", "暂时异常"].includes(item.status)).length;
     const element = document.getElementById("fairSourceSummary");
     if (!fairUi.sources.length) {
-      element.textContent = "采集状态不可用";
+      element.textContent = fairUi.loading ? "正在读取来源状态…" : "来源状态暂不可用";
     } else {
-      element.textContent = `${active} 个来源正常${abnormal ? ` · ${abnormal} 个异常` : ""}`;
+      const statuses = fairUi.sources.map((source) => sourceStatus(source));
+      const failed = statuses.filter((item) => item.kind === "error").length;
+      const warning = statuses.filter((item) => item.kind === "warning").length;
+      const pending = statuses.filter((item) => item.kind === "pending").length;
+      const waiting = statuses.filter((item) => item.kind === "waiting").length;
+      const message = failed ? `${failed} 个来源更新失败`
+        : warning ? `${warning} 个来源待核实`
+          : waiting ? `${waiting} 个来源等待采集` : "来源更新正常";
+      element.textContent = `已加载 ${fairUi.fairs.length} 场 · ${message}`;
+      element.title = pending ? `${pending} 个来源尚未接入，点击查看最近成功时间` : "查看最近成功时间与采集详情";
     }
   }
 
   function renderFairs() {
+    if (!hasWorkspaceAccess()) {
+      document.getElementById("fairCompareBar").hidden = true;
+      return;
+    }
     if (!document.getElementById("fairList")) return;
     if (cloudUser?.id && fairUi.loadedUserId !== cloudUser.id && !fairUi.plansLoading) {
       window.setTimeout(loadFairPlans, 0);
@@ -630,7 +688,7 @@
   }
 
   function ensureSignedIn() {
-    if (cloudUser) return true;
+    if (hasWorkspaceAccess()) return true;
     showToast("请先登录，再保存个人双选会计划");
     document.getElementById("accountButton").click();
     return false;
@@ -639,7 +697,7 @@
   function normalizedLocalPlan(fair, overrides = {}) {
     const current = planFor(fair.id);
     return {
-      fairId: fair.id,
+      fairId: current?.fairId || fair.id,
       payload: {
         state: "saved",
         hidden: false,
@@ -657,7 +715,7 @@
       },
       revision: Number(current?.revision || 0),
       updatedAt: new Date().toISOString(),
-      fair: { ...fair, companies: fair.companies || [] },
+      fair: { ...fair, id: current?.fairId || fair.id, companies: fair.companies || [] },
     };
   }
 
@@ -665,17 +723,18 @@
     const userId = cloudUser?.id || "";
     const previous = planFor(fair.id);
     const next = normalizedLocalPlan(fair, overrides);
-    currentPlans()[fair.id] = next;
+    const planId = next.fairId;
+    currentPlans()[planId] = next;
     saveState();
     renderFairs();
     renderInterviewCalendar();
     try {
-      const result = await requestApi(`/api/fair-plans/${encodeURIComponent(fair.id)}`, {
+      const result = await requestApi(`/api/fair-plans/${encodeURIComponent(planId)}`, {
         method: "PUT",
         body: JSON.stringify({ revision: next.revision, payload: next.payload }),
       });
       if (cloudUser?.id !== userId) return;
-      currentPlans()[fair.id] = {
+      currentPlans()[planId] = {
         ...next,
         revision: result.revision,
         updatedAt: new Date().toISOString(),
@@ -685,8 +744,8 @@
     } catch (error) {
       if (cloudUser?.id !== userId) return;
       if (error.status === 409) {
-        if (previous) currentPlans()[fair.id] = previous;
-        else delete currentPlans()[fair.id];
+        if (previous) currentPlans()[planId] = previous;
+        else delete currentPlans()[planId];
         saveState();
         await loadFairPlansAfterConflict();
         showToast("计划已在其他设备更新，请重新操作");
@@ -752,6 +811,7 @@
           <dt>层级</dt><dd>${escapeHtml(fair.scopeLevel || "待核实")} · ${escapeHtml(fair.scopeBasis || "待核实")}</dd>
           <dt>名单完整度</dt><dd>${escapeHtml(companiesLabel({ ...fair, companyCount: companies.length }))}</dd>
           <dt>最近核实</dt><dd>${escapeHtml(formatCheckedAt(fair.checkedAt))}</dd>
+          ${fair.issues?.length ? `<dt>核实提示</dt><dd>${escapeHtml(fair.issues.join("；"))}</dd>` : ""}
         </dl>
       </section>
       <section class="fair-detail-section">
@@ -768,6 +828,7 @@
         <h3>来源与变更</h3>
         <p class="fair-description">${observations.length ? observations.map((item) => `${item.sourceId || item.name} · ${formatCheckedAt(item.checkedAt)}`).join("\n") : "来源待核实"}${changes.length ? `\n变更记录：${changes.map((item) => `v${item.revision} ${item.fields.join("、")}`).join("；")}` : ""}</p>
         <p><a href="${escapeHtml(fair.url)}" target="_blank" rel="noopener noreferrer">查看官方原文</a></p>
+        ${fair.sources?.length > 1 ? `<p class="fair-description">同场活动的其他发布来源：${fair.sources.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name || source.id)}</a>`).join(" · ")}</p>` : ""}
       </section>
     `;
     openDialog("fairDetailDialog");
@@ -879,26 +940,28 @@
   function renderSourcesDialog() {
     const now = Date.now();
     document.getElementById("fairSourceBody").innerHTML = `
+      <p class="fair-source-note">活动保留最近成功获取的数据；更新失败时仍可查看。以下时间均为北京时间。</p>
       <div class="fair-source-list">
         ${fairUi.sources
           .map((source) => {
-            const lastComplete = source.lastCompleteAt ? new Date(source.lastCompleteAt).getTime() : 0;
-            const stale = lastComplete && now - lastComplete > 24 * 3600000;
-            const stateClass =
-              source.status === "已接入" && !stale
-                ? "is-ok"
-                : source.status === "暂时异常" || stale
-                  ? "is-error"
-                  : "is-warning";
+            const status = sourceStatus(source, now);
+            const error = sourceErrorLabel(source.errorSummary);
+            const companiesUnsupported = source.companiesSupported === false || source.companiesStatus === "unsupported"
+              || /^企业名单接口未接入/.test(source.errorSummary || "");
             return `
               <div class="fair-source-row">
                 <div>
                   <strong>${escapeHtml(source.name)}</strong>
                   <small>${escapeHtml(source.note || "")}</small>
-                  <small>最近尝试：${escapeHtml(formatCheckedAt(source.lastAttemptAt))} · 完整扫描：${escapeHtml(formatCheckedAt(source.lastCompleteAt))}</small>
-                  ${source.errorSummary ? `<small>${escapeHtml(source.errorSummary)}</small>` : ""}
+                  <small>最近成功更新：${escapeHtml(formatCheckedAt(source.lastSuccessAt))}</small>
+                  <small>最近尝试：${escapeHtml(formatCheckedAt(source.lastAttemptAt))} · 活动完整核实：${escapeHtml(formatCheckedAt(source.lastCompleteAt))}</small>
+                  <small>已保存 ${Number(source.itemCount || 0)} 条活动${source.detailsPending ? ` · ${Number(source.detailsPending)} 场详情待续采` : ""}</small>
+                  ${companiesUnsupported ? "<small>企业名单暂未接入，不影响活动更新。</small>" : ""}
+                  ${source.companiesStatus === "error" ? "<small>企业名单本轮读取失败，已保留此前获取的名单。</small>" : ""}
+                  ${source.companiesPending ? `<small>${Number(source.companiesPending)} 场企业名单待补充，不影响活动更新。</small>` : ""}
+                  ${error ? `<small>${escapeHtml(error)}${source.lastSuccessAt ? "；当前可查看此前保存的活动。" : ""}</small>` : ""}
                 </div>
-                <span class="fair-source-state ${stateClass}">${escapeHtml(stale ? "超过 24 小时未完整扫描" : source.status)}</span>
+                <span class="fair-source-state ${status.className}">${escapeHtml(status.label)}</span>
               </div>
             `;
           })

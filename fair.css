@@ -594,6 +594,24 @@
   border-bottom: 1px solid var(--line);
 }
 
+.fair-source-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fair-source-note {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+#fairSourceSummary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
 .fair-source-row strong,
 .fair-source-row small {
   display: block;
@@ -667,6 +685,12 @@
 }
 
 @media (max-width: 620px) {
+  .fair-source-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .fair-intro {
     flex-direction: column;
     align-items: flex-start;

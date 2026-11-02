@@ -315,6 +315,9 @@ let cloudSyncTimer = null;
 let cloudMutationVersion = 0;
 let cloudSyncInFlight = false;
 let cloudSessionLoadingId = "";
+let cloudSessionVersion = 0;
+let cloudAuthReady = false;
+let cloudReturnRoute = "";
 let cloudStatus = "local";
 let cloudStatusMessage = "";
 let cloudOtpPending = false;
@@ -737,10 +740,10 @@ function saveState() {
 function getCloudConfig() {
   const config = window.JOBFLOW_CLOUD_CONFIG || {};
   const url = String(config.url || "").trim();
-  const key = String(config.publishableKey || config.anonKey || "").trim();
+  const key = String(config.publishableKey || "").trim();
   const configured =
     /^https:\/\/.+\.supabase\.co$/i.test(url) &&
-    key.length > 20 &&
+    key.startsWith("sb_publishable_") && key.length > 20 &&
     !url.includes("YOUR_") &&
     !key.includes("YOUR_");
   return { url, key, configured };
@@ -749,7 +752,10 @@ function getCloudConfig() {
 function setCloudStatus(status, message = "") {
   cloudStatus = status;
   cloudStatusMessage = message;
-  if (document.readyState !== "loading") renderAccount();
+  if (document.readyState !== "loading") {
+    renderAccount();
+    renderAuthGate();
+  }
 }
 
 function serializableCloudState() {
@@ -776,24 +782,30 @@ async function uploadCloudState() {
   }
   window.clearTimeout(cloudSyncTimer);
   const revision = cloudMutationVersion;
+  const userId = cloudUser.id;
+  const sessionVersion = cloudSessionVersion;
+  const pendingKey = cloudPendingStorageKey(userId);
+  const snapshot = serializableCloudState();
   cloudSyncInFlight = true;
   setCloudStatus("syncing");
   try {
     const { error } = await supabaseClient.from(CLOUD_STATE_TABLE).upsert(
       {
-        user_id: cloudUser.id,
-        state: serializableCloudState(),
+        user_id: userId,
+        state: snapshot,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
     );
     if (error) throw error;
+    if (sessionVersion !== cloudSessionVersion) return false;
     if (revision === cloudMutationVersion) {
-      localStorage.removeItem(cloudPendingStorageKey());
+      localStorage.removeItem(pendingKey);
     }
     setCloudStatus("synced");
     return true;
   } catch (error) {
+    if (sessionVersion !== cloudSessionVersion) return false;
     console.error("Cloud state sync failed.", error);
     setCloudStatus("error", error.message || "云端同步失败");
     return false;
@@ -803,7 +815,7 @@ async function uploadCloudState() {
   }
 }
 
-async function loadCloudStateForUser(user, previousState) {
+async function loadCloudStateForUser(user, previousState, sessionVersion) {
   cloudSyncReady = false;
   setCloudStatus("loading");
   const storageKey = cloudStateStorageKey(user.id);
@@ -830,7 +842,7 @@ async function loadCloudStateForUser(user, previousState) {
       .eq("user_id", user.id)
       .maybeSingle();
     if (error) throw error;
-    if (cloudUser?.id !== user.id) return false;
+    if (sessionVersion !== cloudSessionVersion) return false;
 
     if (data?.state && Array.isArray(data.state.applications)) {
       if (pendingAt && pendingAt > String(data.updated_at || "")) {
@@ -858,15 +870,17 @@ async function loadCloudStateForUser(user, previousState) {
       localStorage.setItem(storageKey, JSON.stringify(state));
       cloudSyncReady = true;
       await uploadCloudState();
+      if (sessionVersion !== cloudSessionVersion) return false;
       if (!hadCachedState && canMigrateLocalState) {
         await migrateLocalAssetsToCloud(state.applications);
       }
     }
+    if (sessionVersion !== cloudSessionVersion) return false;
     renderAll();
     return true;
   } catch (error) {
     console.error("Cloud state loading failed.", error);
-    if (cloudUser?.id !== user.id) return false;
+    if (sessionVersion !== cloudSessionVersion) return false;
     cloudSyncReady = true;
     setCloudStatus("error", error.message || "暂时无法读取云端数据");
     renderAll();
@@ -875,13 +889,16 @@ async function loadCloudStateForUser(user, previousState) {
 }
 
 async function handleCloudSession(session, eventName = "") {
-  const user = session?.user || null;
+  let user = session?.user || null;
   if (!user) {
+    cloudSessionVersion += 1;
+    cloudAuthReady = true;
     const hadUser = Boolean(cloudUser);
     cloudSessionLoadingId = "";
     cloudUser = null;
     cloudSyncReady = false;
     window.clearTimeout(cloudSyncTimer);
+    if (hadUser) closeWorkspaceDialogs();
     setCloudStatus(supabaseClient ? "signed-out" : "local");
     if (hadUser) {
       state = loadState();
@@ -889,21 +906,128 @@ async function handleCloudSession(session, eventName = "") {
     } else {
       renderAccount();
     }
+    resolveCloudRoute();
     return;
   }
-  clearCloudOtpState();
   if (
     cloudUser?.id === user.id &&
     (cloudSyncReady || cloudSessionLoadingId === user.id)
   ) {
+    cloudUser = user;
+    cloudAuthReady = true;
+    resolveCloudRoute();
     return;
   }
-  const previousState = state;
+  const sessionVersion = ++cloudSessionVersion;
+  cloudAuthReady = false;
+  cloudSyncReady = false;
+  window.clearTimeout(cloudSyncTimer);
+  if (cloudUser) {
+    closeWorkspaceDialogs();
+    cloudUser = null;
+    state = loadState();
+    renderAll();
+  }
+  setCloudStatus("loading", "正在验证登录状态");
+  // Resolve cached sessions with Auth before rendering a private workspace.
+  let result;
+  try {
+    result = await supabaseClient.auth.getUser(session.access_token);
+  } catch (error) {
+    result = { error };
+  }
+  const { data, error } = result;
+  if (sessionVersion !== cloudSessionVersion) return;
+  cloudAuthReady = true;
+  if (error || !data?.user || data.user.id !== user.id) {
+    await handleCloudSession(null, "SIGNED_OUT");
+    setCloudStatus("error", "登录状态已失效或暂时无法验证，请重新登录");
+    return;
+  }
+  user = data.user;
+  clearCloudOtpState();
+  const previousState = loadState();
+  closeWorkspaceDialogs();
   cloudUser = user;
   cloudSessionLoadingId = user.id;
-  await loadCloudStateForUser(user, previousState);
+  await loadCloudStateForUser(user, previousState, sessionVersion);
+  if (sessionVersion !== cloudSessionVersion) return;
   if (cloudSessionLoadingId === user.id) cloudSessionLoadingId = "";
+  resolveCloudRoute();
   if (eventName === "SIGNED_IN") showToast("登录成功，已切换到你的云端数据");
+}
+
+function closeWorkspaceDialogs() {
+  cleanupInterviewTranscription();
+  document.querySelectorAll("dialog[open]").forEach((dialog) => {
+    if (dialog.id !== "accountDialog") dialog.close();
+  });
+  document.getElementById("imageLightbox").hidden = true;
+  pendingJdImages = [];
+  capturePendingJdImages = [];
+  captureDraft = null;
+  quickCaptureImage = null;
+  quickOcrBusy = false;
+  quickAiBusy = false;
+  document.getElementById("quickCaptureInput").value = "";
+  document.getElementById("quickImagePreview").hidden = true;
+  interviewReviewDraft = null;
+  selectedInterviewMedia = null;
+  closeConfirm();
+}
+
+function hasWorkspaceAccess() {
+  return cloudAuthReady && Boolean(cloudUser) && cloudSyncReady;
+}
+
+function renderAuthGate() {
+  const authorized = hasWorkspaceAccess();
+  document.querySelector(".app-shell").hidden = !authorized;
+  document.querySelector(".mobile-nav").hidden = !authorized;
+  document.getElementById("authGate").hidden = authorized;
+  if (!authorized) document.getElementById("fairCompareBar").hidden = true;
+  document.getElementById("authGateMessage").textContent =
+    !cloudAuthReady || cloudStatus === "loading"
+      ? "正在验证登录状态并读取工作区。"
+      : cloudStatus === "unconfigured"
+        ? "暂时无法连接登录服务，请稍后刷新重试。"
+        : "登录后访问你的投递、日历和面试复盘。";
+}
+
+function resolveCloudRoute() {
+  const route = window.location.hash.slice(1);
+  renderAuthGate();
+  if (!cloudAuthReady) {
+    if (VIEW_META[route] || route === "cloud") cloudReturnRoute = route;
+    return;
+  }
+  if (!cloudUser) {
+    if (VIEW_META[route] || route === "cloud") cloudReturnRoute = route;
+    window.history.replaceState(null, "", "#login");
+    renderAccount();
+    openDialog("accountDialog");
+    return;
+  }
+  if (!cloudSyncReady) return;
+  if (route === "login") {
+    const destination = cloudReturnRoute || "dashboard";
+    cloudReturnRoute = "";
+    navigateRoute(destination);
+    return;
+  }
+  if (route !== "cloud") {
+    switchView(VIEW_META[route] ? route : "dashboard");
+    return;
+  }
+  renderAccount();
+  openDialog("accountDialog");
+}
+
+function navigateRoute(route) {
+  const destination = route === "cloud" || route === "login" || VIEW_META[route]
+    ? route : "dashboard";
+  window.history.replaceState(null, "", `#${destination}`);
+  resolveCloudRoute();
 }
 
 function cloudRedirectUrl() {
@@ -1007,7 +1131,8 @@ async function verifyCloudLoginCode(email, token) {
   }
   clearCloudOtpState();
   await handleCloudSession(data.session, "SIGNED_IN");
-  closeDialog("accountDialog");
+  if (!cloudUser) return false;
+  resolveCloudRoute();
   return true;
 }
 
@@ -1017,29 +1142,33 @@ async function signOutCloudAccount() {
   if (cloudSyncReady && localStorage.getItem(cloudPendingStorageKey())) {
     await uploadCloudState();
   }
-  const { error } = await supabaseClient.auth.signOut();
+  const { error } = await supabaseClient.auth.signOut({ scope: "local" });
   if (error) {
     setCloudStatus("error", error.message);
     showToast(error.message || "退出失败");
     return;
   }
   clearCloudOtpState();
-  closeDialog("accountDialog");
-  showToast("已退出登录，当前显示本地数据");
+  await handleCloudSession(null, "SIGNED_OUT");
+  showToast("已退出登录，请登录后访问工作区");
 }
 
 async function clearCurrentCloudWorkspace() {
   if (!cloudUser || !cloudSyncReady) return;
+  const sessionVersion = cloudSessionVersion;
   const applicationIds = state.applications.map((application) => application.id);
   setCloudStatus("syncing", "正在清空当前账户");
   try {
     if (typeof window.clearFairPlans === "function") {
       await window.clearFairPlans();
     }
+    if (sessionVersion !== cloudSessionVersion) return;
     await clearAssetDb(applicationIds);
+    if (sessionVersion !== cloudSessionVersion) return;
     state = buildEmptyState(cloudUser.email || "");
     saveState();
     await uploadCloudState();
+    if (sessionVersion !== cloudSessionVersion) return;
     closeConfirm();
     closeDialog("dataDialog");
     clearApplicationFilters();
@@ -1057,7 +1186,9 @@ async function clearCurrentCloudWorkspace() {
 async function initializeCloudSync() {
   const config = getCloudConfig();
   if (!config.configured || !window.supabase?.createClient) {
+    cloudAuthReady = true;
     setCloudStatus("unconfigured");
+    resolveCloudRoute();
     return;
   }
   supabaseClient = window.supabase.createClient(config.url, config.key, {
@@ -1072,7 +1203,9 @@ async function initializeCloudSync() {
   });
   const { data, error } = await supabaseClient.auth.getSession();
   if (error) {
+    cloudAuthReady = true;
     setCloudStatus("error", error.message);
+    resolveCloudRoute();
     return;
   }
   await handleCloudSession(data.session, "INITIAL_SESSION");
@@ -1213,7 +1346,10 @@ async function dataUrlToBlob(dataUrl) {
 }
 
 async function putCloudJdImages(applicationId, images) {
+  const sessionVersion = cloudSessionVersion;
+  const folder = cloudAssetFolder(applicationId);
   const currentFiles = await listCloudJdFiles(applicationId);
+  if (sessionVersion !== cloudSessionVersion) return;
   const desiredIds = new Set(images.map((image) => image.id));
   const removePaths = currentFiles
     .filter((file) => !desiredIds.has(file.name.replace(/\.[^.]+$/, "")))
@@ -1229,11 +1365,13 @@ async function putCloudJdImages(applicationId, images) {
     currentFiles.map((file) => file.name.replace(/\.[^.]+$/, "")),
   );
   for (const image of images) {
+    if (sessionVersion !== cloudSessionVersion) return;
     if (image.remotePath || currentIds.has(image.id)) continue;
     if (!String(image.dataUrl || "").startsWith("data:")) continue;
     const extension = imageExtension(image.type);
-    const path = `${cloudAssetFolder(applicationId)}/${image.id}.${extension}`;
+    const path = `${folder}/${image.id}.${extension}`;
     const blob = await dataUrlToBlob(image.dataUrl);
+    if (sessionVersion !== cloudSessionVersion) return;
     const { error } = await supabaseClient.storage
       .from(CLOUD_ASSET_BUCKET)
       .upload(path, blob, {
@@ -1257,13 +1395,16 @@ async function deleteCloudJdImages(applicationId) {
 
 async function migrateLocalAssetsToCloud(applications) {
   if (!supabaseClient || !cloudUser) return;
+  const sessionVersion = cloudSessionVersion;
   const candidates = applications.filter((application) => application.jdCount > 0);
   for (const application of candidates) {
     const localImages = await getLocalJdImages(application.id).catch(() => []);
+    if (sessionVersion !== cloudSessionVersion) return;
     if (!localImages.length) continue;
     try {
       await putCloudJdImages(application.id, localImages);
     } catch (error) {
+      if (sessionVersion !== cloudSessionVersion) return;
       console.error(`JD image migration failed for ${application.id}.`, error);
       setCloudStatus("error", "部分 JD 图片迁移失败");
     }
@@ -1293,7 +1434,9 @@ async function deleteJdImages(applicationId) {
 
 async function clearAssetDb(applicationIds = []) {
   if (cloudUser && cloudSyncReady) {
+    const sessionVersion = cloudSessionVersion;
     for (const applicationId of applicationIds) {
+      if (sessionVersion !== cloudSessionVersion) return;
       await deleteCloudJdImages(applicationId);
     }
     return;
@@ -1564,12 +1707,15 @@ function updateOcrProgress(message) {
 }
 
 async function recognizeQuickCaptureImage(file) {
+  if (!hasWorkspaceAccess()) return;
+  const sessionVersion = cloudSessionVersion;
   if (quickOcrBusy || quickAiBusy) {
     showToast("当前内容仍在识别中");
     return;
   }
   try {
     const dataUrl = await readImageAsDataUrl(file);
+    if (sessionVersion !== cloudSessionVersion) return;
     quickCaptureImage = {
       name: file.name || `面试邮件_${Date.now()}.png`,
       dataUrl,
@@ -1586,8 +1732,11 @@ async function recognizeQuickCaptureImage(file) {
     const result = await window.Tesseract.recognize(dataUrl, "chi_sim", {
       langPath:
         "https://cdn.jsdelivr.net/npm/@tesseract.js-data/chi_sim@1.0.0/4.0.0_best_int",
-      logger: updateOcrProgress,
+      logger: (message) => {
+        if (sessionVersion === cloudSessionVersion) updateOcrProgress(message);
+      },
     });
+    if (sessionVersion !== cloudSessionVersion) return;
     const text = normalizeOcrText(result?.data?.text);
     if (text.replace(/\s/g, "").length < 4) {
       throw new Error("没有识别到足够文字，请换用更清晰的截图");
@@ -1605,18 +1754,25 @@ async function recognizeQuickCaptureImage(file) {
       sourceName: quickCaptureImage.name,
     });
   } catch (error) {
+    if (sessionVersion !== cloudSessionVersion) return;
     if (!quickCaptureImage) return;
     quickCaptureImage.status = "error";
     quickCaptureImage.message = error.message || "截图识别失败";
     quickCaptureImage.progress = 0;
     showToast(quickCaptureImage.message);
   } finally {
-    quickOcrBusy = false;
-    renderQuickCaptureImage();
+    if (sessionVersion === cloudSessionVersion) {
+      quickOcrBusy = false;
+      renderQuickCaptureImage();
+    }
   }
 }
 
 function openDialog(id) {
+  if (id !== "accountDialog" && !hasWorkspaceAccess()) {
+    navigateRoute(currentView);
+    return;
+  }
   const dialog = document.getElementById(id);
   if (dialog && !dialog.open) dialog.showModal();
 }
@@ -1738,6 +1894,12 @@ function renderAccount() {
 
 function switchView(view, options = {}) {
   if (!VIEW_META[view]) return;
+  if (!hasWorkspaceAccess()) {
+    navigateRoute(view);
+    return;
+  }
+  cloudReturnRoute = "";
+  closeDialog("accountDialog");
   currentView = view;
   if (window.location.hash !== `#${view}`) {
     window.history.replaceState(null, "", `#${view}`);
@@ -2303,6 +2465,7 @@ async function showInterviewNotification(event, key) {
 }
 
 async function checkInterviewNotifications() {
+  if (!hasWorkspaceAccess()) return;
   if (
     !getNotificationEnvironment().available ||
     window.Notification.permission !== "granted" ||
@@ -3418,6 +3581,9 @@ async function analyzeInterviewTranscriptWithAi(transcript) {
 }
 
 async function analyzeInterviewTranscript() {
+  if (!hasWorkspaceAccess() || !interviewReviewDraft) return;
+  const sessionVersion = cloudSessionVersion;
+  const draft = interviewReviewDraft;
   const transcript = document.getElementById("interviewTranscriptInput").value.trim();
   if (!transcript) {
     showToast("请先粘贴面试转写文本");
@@ -3443,6 +3609,7 @@ async function analyzeInterviewTranscript() {
     buttonLabel.textContent = "AI 整理问题";
   }
 
+  if (sessionVersion !== cloudSessionVersion || interviewReviewDraft !== draft) return;
   if (aiResult?.questions.length) {
     interviewReviewDraft.questions = aiResult.questions;
     interviewReviewDraft.analysisSource = "ai";
@@ -3561,6 +3728,11 @@ function saveInterviewReview() {
 }
 
 function renderAll() {
+  renderAuthGate();
+  if (!hasWorkspaceAccess()) {
+    renderAccount();
+    return;
+  }
   document
     .querySelector(".app-shell")
     ?.classList.toggle("is-dashboard-shell", currentView === "dashboard");
@@ -4135,6 +4307,8 @@ async function parseQuickCaptureWithAi(text, options = {}) {
 }
 
 async function openCapturePreview(text, options = {}) {
+  if (!hasWorkspaceAccess()) return;
+  const sessionVersion = cloudSessionVersion;
   const localDraft = parseQuickCapture(text);
   let parsedDraft = localDraft;
 
@@ -4146,14 +4320,18 @@ async function openCapturePreview(text, options = {}) {
       const aiResult = await parseQuickCaptureWithAi(text, options);
       if (aiResult) parsedDraft = mergeAiCapture(localDraft, aiResult);
     } catch (error) {
+      if (sessionVersion !== cloudSessionVersion) return;
       console.warn("Cloud AI parsing unavailable.", error?.message || error);
       showToast("AI 暂时不可用，已切换为本地识别");
     } finally {
-      quickAiBusy = false;
-      renderQuickCaptureImage();
+      if (sessionVersion === cloudSessionVersion) {
+        quickAiBusy = false;
+        renderQuickCaptureImage();
+      }
     }
   }
 
+  if (sessionVersion !== cloudSessionVersion) return;
   captureDraft = {
     ...parsedDraft,
     source: options.source || "text",
@@ -4242,6 +4420,8 @@ function applyCaptureTarget() {
 }
 
 async function saveCapture() {
+  if (!hasWorkspaceAccess()) return;
+  const sessionVersion = cloudSessionVersion;
   const targetId = document.getElementById("captureTargetInput").value;
   const values = {
     company: document.getElementById("captureCompanyInput").value.trim(),
@@ -4315,10 +4495,12 @@ async function saveCapture() {
     state.applications.unshift(application);
   }
 
+  saveState();
   if (capturePendingJdImages.length) {
     try {
       const existingImages =
         targetId === "new" ? [] : await getJdImages(application.id);
+      if (sessionVersion !== cloudSessionVersion) return;
       const mergedImages = [...existingImages];
       const knownImages = new Set(existingImages.map((image) => image.dataUrl));
       capturePendingJdImages.forEach((image) => {
@@ -4328,8 +4510,10 @@ async function saveCapture() {
         }
       });
       await putJdImages(application.id, mergedImages);
+      if (sessionVersion !== cloudSessionVersion) return;
       application.jdCount = mergedImages.length;
     } catch (error) {
+      if (sessionVersion !== cloudSessionVersion) return;
       showToast(`进展已保存，但 JD 图片保存失败：${error.message}`);
     }
   }
@@ -4351,6 +4535,8 @@ async function saveCapture() {
 }
 
 async function openApplication(id = "") {
+  if (!hasWorkspaceAccess()) return;
+  const sessionVersion = cloudSessionVersion;
   const item = id ? state.applications.find((application) => application.id === id) : null;
   editingApplicationId = item ? item.id : "";
   document.getElementById("applicationForm").reset();
@@ -4374,7 +4560,9 @@ async function openApplication(id = "") {
   document.getElementById("linkInput").value = item ? item.link : "";
   document.getElementById("notesInput").value = item ? item.notes : "";
 
-  pendingJdImages = item ? await getJdImages(item.id).catch(() => []) : [];
+  const images = item ? await getJdImages(item.id).catch(() => []) : [];
+  if (sessionVersion !== cloudSessionVersion) return;
+  pendingJdImages = images;
   renderJdGallery();
   renderProgressTimeline(item);
   openDialog("applicationDialog");
@@ -4511,6 +4699,8 @@ function fileToCompressedImage(file) {
 }
 
 async function addJdFiles(files, context = "application") {
+  if (!hasWorkspaceAccess()) return;
+  const sessionVersion = cloudSessionVersion;
   const isCapture = context === "capture";
   const images = isCapture ? capturePendingJdImages : pendingJdImages;
   const targetId = isCapture
@@ -4529,6 +4719,7 @@ async function addJdFiles(files, context = "application") {
   }
   showToast("正在处理 JD 截图…");
   const results = await Promise.allSettled(selected.map(fileToCompressedImage));
+  if (sessionVersion !== cloudSessionVersion) return;
   const added = results
     .filter((result) => result.status === "fulfilled")
     .map((result) => result.value);
@@ -4554,6 +4745,8 @@ async function addJdFiles(files, context = "application") {
 }
 
 async function saveApplicationFromForm() {
+  if (!hasWorkspaceAccess()) return;
+  const sessionVersion = cloudSessionVersion;
   const id = document.getElementById("applicationId").value;
   const existing = id
     ? state.applications.find((application) => application.id === id)
@@ -4604,11 +4797,14 @@ async function saveApplicationFromForm() {
     state.applications.unshift(application);
   }
 
+  saveState();
   try {
     await putJdImages(application.id, pendingJdImages);
   } catch (error) {
+    if (sessionVersion !== cloudSessionVersion) return;
     showToast(`岗位已保存，但 JD 图片保存失败：${error.message}`);
   }
+  if (sessionVersion !== cloudSessionVersion) return;
   saveState();
   closeDialog("applicationDialog");
   renderAll();
@@ -5260,9 +5456,10 @@ function bindEvents() {
   });
 
   const openAccount = () => {
-    renderAccount();
-    openDialog("accountDialog");
+    navigateRoute(cloudUser ? "cloud" : "login");
   };
+  document.getElementById("authGateLoginButton").addEventListener("click", openAccount);
+  document.getElementById("authGateThemeButton").addEventListener("click", toggleTheme);
   document.getElementById("accountButton").addEventListener("click", openAccount);
   document.getElementById("accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -5364,6 +5561,12 @@ function bindEvents() {
 
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("close", () => {
+      if (dialog.id === "accountDialog" && ["cloud", "login"].includes(window.location.hash.slice(1))) {
+        if (hasWorkspaceAccess()) {
+          cloudReturnRoute = "";
+          window.history.replaceState(null, "", `#${currentView}`);
+        }
+      }
       if (dialog.id === "capturePreviewDialog") {
         const sourceWasImage = captureDraft?.source === "image";
         capturePendingJdImages = [];
@@ -5408,7 +5611,10 @@ async function init() {
   getNotificationWorkerRegistration();
   renderAll();
   const requestedView = window.location.hash.slice(1);
-  if (VIEW_META[requestedView]) switchView(requestedView);
+  navigateRoute(requestedView || "dashboard");
+  window.addEventListener("hashchange", () => {
+    navigateRoute(window.location.hash.slice(1));
+  });
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (!localStorage.getItem(THEME_STORAGE_KEY)) applyTheme();
   });

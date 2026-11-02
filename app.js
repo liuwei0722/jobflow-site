@@ -724,12 +724,6 @@ mockData.applications[0].progress.push(createProgress(
   { scheduledAt: `${dateOffset(1)}T14:00`, endedAt: `${dateOffset(1)}T15:00` },
 ));
 syncApplicationFromProgress(mockData.applications[0]);
-mockData.fairs = [{
-  id: "guest-fair", title: "示例高校秋季双选会", mode: "offline", date: today(),
-  startTime: "14:00", endTime: "17:00", school: "示例大学", place: "示例大学体育馆",
-  district: "海淀区", scopeLevel: "高校级", eligibility: "示例：高校毕业生可参加",
-  companiesStatus: "unpublished", companies: [], description: "此活动仅用于演示。",
-}];
 let state = buildGuestState();
 
 function buildGuestState() {
@@ -1012,11 +1006,38 @@ function canBrowseWorkspace() {
   return isGuest || hasWorkspaceAccess();
 }
 
-function requireWorkspaceAccess() {
-  if (hasWorkspaceAccess()) return true;
-  cloudReturnRoute = currentView;
-  navigateRoute("login");
-  return false;
+// Call immediately before committing a draft, changing business data or uploading.
+function checkGuestPermission() {
+  if (isGuest) {
+    const message = "当前为演示模式，登录后即可修改数据";
+    showToast(message);
+    // Native modal dialogs cover the global toast. Reuse their existing copy and button.
+    const dialog = [...document.querySelectorAll("dialog[open]")].pop();
+    const hint = dialog?.querySelector?.(".modal-header .eyebrow");
+    const login = dialog?.querySelector?.(".modal-footer [data-close-dialog]");
+    for (const [element, text] of [[hint, message], [login, "去登录"]]) {
+      if (!element) continue;
+      if (!Object.hasOwn(element.dataset, "guestOriginalText")) {
+        element.dataset.guestOriginalText = element.textContent;
+      }
+      element.textContent = text;
+    }
+    if (login) login.dataset.guestLogin = "true";
+    return false;
+  }
+  if (!hasWorkspaceAccess()) {
+    showToast("工作区正在加载，请稍后重试");
+    return false;
+  }
+  return true;
+}
+
+function resetGuestPermissionPrompt(dialog) {
+  dialog?.querySelectorAll?.("[data-guest-original-text]").forEach((element) => {
+    element.textContent = element.dataset.guestOriginalText;
+    delete element.dataset.guestOriginalText;
+    delete element.dataset.guestLogin;
+  });
 }
 
 function renderAuthGate() {
@@ -1204,6 +1225,7 @@ async function signOutCloudAccount() {
 }
 
 async function clearCurrentCloudWorkspace() {
+  if (!checkGuestPermission()) return;
   if (!cloudUser || !cloudSyncReady) return;
   const sessionVersion = cloudSessionVersion;
   const applicationIds = state.applications.map((application) => application.id);
@@ -1462,11 +1484,13 @@ async function migrateLocalAssetsToCloud(applications) {
 }
 
 async function getJdImages(applicationId) {
+  if (isGuest) return [];
   if (cloudUser && cloudSyncReady) return getCloudJdImages(applicationId);
   return getLocalJdImages(applicationId);
 }
 
 async function putJdImages(applicationId, images) {
+  if (!checkGuestPermission()) return;
   if (cloudUser && cloudSyncReady) {
     await putCloudJdImages(applicationId, images);
     return;
@@ -1475,6 +1499,7 @@ async function putJdImages(applicationId, images) {
 }
 
 async function deleteJdImages(applicationId) {
+  if (!checkGuestPermission()) return;
   if (cloudUser && cloudSyncReady) {
     await deleteCloudJdImages(applicationId);
     return;
@@ -1483,6 +1508,7 @@ async function deleteJdImages(applicationId) {
 }
 
 async function clearAssetDb(applicationIds = []) {
+  if (!checkGuestPermission()) return;
   if (cloudUser && cloudSyncReady) {
     const sessionVersion = cloudSessionVersion;
     for (const applicationId of applicationIds) {
@@ -1757,7 +1783,6 @@ function updateOcrProgress(message) {
 }
 
 async function recognizeQuickCaptureImage(file) {
-  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   if (quickOcrBusy || quickAiBusy) {
     showToast("当前内容仍在识别中");
@@ -1819,12 +1844,14 @@ async function recognizeQuickCaptureImage(file) {
 }
 
 function openDialog(id) {
-  const guestReadable = ["fairDetailDialog", "fairCompareDialog", "fairSourceDialog"];
-  if (id !== "accountDialog" && !(isGuest && guestReadable.includes(id)) && !requireWorkspaceAccess()) {
+  if (id !== "accountDialog" && !canBrowseWorkspace()) {
     return;
   }
   const dialog = document.getElementById(id);
-  if (dialog && !dialog.open) dialog.showModal();
+  if (dialog && !dialog.open) {
+    resetGuestPermissionPrompt(dialog);
+    dialog.showModal();
+  }
 }
 
 function closeDialog(id) {
@@ -1833,11 +1860,14 @@ function closeDialog(id) {
 }
 
 function confirmAction(title, message, onAccept) {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   document.getElementById("confirmTitle").textContent = title;
   document.getElementById("confirmMessage").textContent = message;
   document.getElementById("confirmPopover").hidden = false;
-  confirmCallback = onAccept;
+  const sessionVersion = cloudSessionVersion;
+  confirmCallback = () => {
+    if (sessionVersion === cloudSessionVersion && checkGuestPermission()) return onAccept();
+  };
   setTimeout(() => document.getElementById("confirmCancelButton").focus(), 0);
 }
 
@@ -2457,7 +2487,7 @@ function renderNotificationToggle() {
 }
 
 async function toggleInterviewNotifications() {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   const environment = getNotificationEnvironment();
   if (!environment.available) {
     showToast(environment.message);
@@ -2979,7 +3009,7 @@ function renderCompanies() {
   document.getElementById("companyGrid").innerHTML = companies
     .map((company) => {
       const stage = stageMeta(company.stage);
-      const added = addedCompanies.has(company.name);
+      const added = !isGuest && addedCompanies.has(company.name);
       return `
         <article class="company-card">
           <div class="company-card-head">
@@ -3205,7 +3235,6 @@ function renderInterviewReviewEditor() {
 }
 
 function openInterviewReviewDialog(applicationId, progressId) {
-  if (!requireWorkspaceAccess()) return;
   const application = state.applications.find((item) => item.id === applicationId);
   const progress = application?.progress.find((item) => item.id === progressId);
   if (!application || !progress || !INTERVIEW_STAGES.has(progress.stage)) {
@@ -3473,6 +3502,7 @@ async function cleanupInterviewTranscription(job = activeInterviewTranscription)
 }
 
 async function transcribeSelectedInterviewMedia() {
+  if (!checkGuestPermission()) return;
   if (!selectedInterviewMedia) {
     showToast("请先选择录音或视频");
     return;
@@ -3632,7 +3662,7 @@ async function analyzeInterviewTranscriptWithAi(transcript) {
 }
 
 async function analyzeInterviewTranscript() {
-  if (!hasWorkspaceAccess() || !interviewReviewDraft) return;
+  if (!checkGuestPermission() || !interviewReviewDraft) return;
   const sessionVersion = cloudSessionVersion;
   const draft = interviewReviewDraft;
   const transcript = document.getElementById("interviewTranscriptInput").value.trim();
@@ -3720,6 +3750,7 @@ function addInterviewQuestion() {
 }
 
 function removeInterviewQuestion(id) {
+  if (!checkGuestPermission()) return;
   if (!interviewReviewDraft) return;
   syncInterviewReviewDraftFromEditor();
   expandedReviewQuestionIds.delete(id);
@@ -3746,6 +3777,7 @@ function toggleInterviewQuestion(id) {
 }
 
 function saveInterviewReview() {
+  if (!checkGuestPermission()) return;
   const applicationId = document.getElementById("reviewApplicationId").value;
   const progressId = document.getElementById("reviewProgressId").value;
   const application = state.applications.find((item) => item.id === applicationId);
@@ -4358,7 +4390,6 @@ async function parseQuickCaptureWithAi(text, options = {}) {
 }
 
 async function openCapturePreview(text, options = {}) {
-  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const localDraft = parseQuickCapture(text);
   let parsedDraft = localDraft;
@@ -4471,7 +4502,7 @@ function applyCaptureTarget() {
 }
 
 async function saveCapture() {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   const sessionVersion = cloudSessionVersion;
   const targetId = document.getElementById("captureTargetInput").value;
   const values = {
@@ -4586,7 +4617,6 @@ async function saveCapture() {
 }
 
 async function openApplication(id = "") {
-  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const item = id ? state.applications.find((application) => application.id === id) : null;
   editingApplicationId = item ? item.id : "";
@@ -4611,7 +4641,7 @@ async function openApplication(id = "") {
   document.getElementById("linkInput").value = item ? item.link : "";
   document.getElementById("notesInput").value = item ? item.notes : "";
 
-  const images = item ? await getJdImages(item.id).catch(() => []) : [];
+  const images = !isGuest && item ? await getJdImages(item.id).catch(() => []) : [];
   if (sessionVersion !== cloudSessionVersion) return;
   pendingJdImages = images;
   renderJdGallery();
@@ -4750,7 +4780,6 @@ function fileToCompressedImage(file) {
 }
 
 async function addJdFiles(files, context = "application") {
-  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const isCapture = context === "capture";
   const images = isCapture ? capturePendingJdImages : pendingJdImages;
@@ -4796,7 +4825,7 @@ async function addJdFiles(files, context = "application") {
 }
 
 async function saveApplicationFromForm() {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   const sessionVersion = cloudSessionVersion;
   const id = document.getElementById("applicationId").value;
   const existing = id
@@ -4863,7 +4892,6 @@ async function saveApplicationFromForm() {
 }
 
 function openProgressDialog(progressId = "") {
-  if (!requireWorkspaceAccess()) return;
   const application = state.applications.find((item) => item.id === editingApplicationId);
   if (!application) {
     showToast("请先保存岗位档案");
@@ -4898,7 +4926,7 @@ function openProgressDialog(progressId = "") {
 }
 
 function saveProgressFromForm() {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   const application = state.applications.find((item) => item.id === editingApplicationId);
   if (!application) return;
   const id = document.getElementById("progressIdInput").value;
@@ -4944,6 +4972,7 @@ function saveProgressFromForm() {
 }
 
 function deleteCurrentProgress() {
+  if (!checkGuestPermission()) return;
   const application = state.applications.find((item) => item.id === editingApplicationId);
   const id = document.getElementById("progressIdInput").value;
   const progress = application && application.progress.find((item) => item.id === id);
@@ -4967,7 +4996,7 @@ function deleteCurrentProgress() {
 }
 
 function updateApplicationStatus(id, status) {
-  if (!requireWorkspaceAccess()) {
+  if (!checkGuestPermission()) {
     renderApplications();
     return;
   }
@@ -4987,6 +5016,7 @@ function updateApplicationStatus(id, status) {
 }
 
 function deleteCurrentApplication() {
+  if (!checkGuestPermission()) return;
   const id = document.getElementById("applicationId").value;
   const application = state.applications.find((item) => item.id === id);
   if (!application) return;
@@ -5007,7 +5037,7 @@ function deleteCurrentApplication() {
 }
 
 function addCompanyToApplications(companyName) {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   const company = COMPANIES.find((item) => item.name === companyName);
   if (!company || state.applications.some((item) => item.company === company.name)) return;
   const now = new Date().toISOString();
@@ -5055,7 +5085,6 @@ function downloadBlob(blob, filename) {
 }
 
 function exportCsv() {
-  if (!requireWorkspaceAccess()) return;
   if (!state.applications.length) {
     showToast("当前没有可导出的投递记录");
     return;
@@ -5124,7 +5153,6 @@ function exportCsv() {
 }
 
 function exportJson() {
-  if (!requireWorkspaceAccess()) return;
   downloadBlob(
     new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }),
     `求职进度备份_${today()}.json`,
@@ -5133,7 +5161,7 @@ function exportJson() {
 }
 
 function mergeImportedState(imported) {
-  if (!requireWorkspaceAccess()) return;
+  if (!checkGuestPermission()) return;
   if (!imported || !Array.isArray(imported.applications)) {
     throw new Error("文件中没有有效的投递数据");
   }
@@ -5153,6 +5181,11 @@ function mergeImportedState(imported) {
 
 function bindEvents() {
   document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-guest-login]")) {
+      cloudReturnRoute = currentView;
+      navigateRoute("login");
+      return;
+    }
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
       switchView(viewButton.dataset.view);
@@ -5336,7 +5369,6 @@ function bindEvents() {
 
   document.getElementById("quickCaptureForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!requireWorkspaceAccess()) return;
     if (quickOcrBusy || quickAiBusy) return;
     const text = document.getElementById("quickCaptureInput").value.trim();
     if (!text) {
@@ -5348,7 +5380,6 @@ function bindEvents() {
   const quickCapture = document.querySelector(".quick-capture");
   const quickImageInput = document.getElementById("quickImageInput");
   document.getElementById("quickImageButton").addEventListener("click", () => {
-    if (!requireWorkspaceAccess()) return;
     if (!quickOcrBusy && !quickAiBusy) quickImageInput.click();
   });
   document.getElementById("quickImageRemoveButton").addEventListener(
@@ -5566,12 +5597,16 @@ function bindEvents() {
     .addEventListener("click", signOutCloudAccount);
 
   const openData = () => {
-    document.getElementById("clearCloudWorkspaceButton").hidden = !cloudUser;
+    document.getElementById("clearCloudWorkspaceButton").hidden = false;
     openDialog("dataDialog");
   };
   document.getElementById("dataButton").addEventListener("click", openData);
   document.getElementById("exportJsonButton").addEventListener("click", exportJson);
   document.getElementById("importJsonInput").addEventListener("change", (event) => {
+    if (!checkGuestPermission()) {
+      event.target.value = "";
+      return;
+    }
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -5607,7 +5642,7 @@ function bindEvents() {
     );
   });
   document.getElementById("clearCloudWorkspaceButton").addEventListener("click", () => {
-    if (!cloudUser) return;
+    if (!checkGuestPermission()) return;
     confirmAction(
       "清空当前云端工作区",
       `确认永久删除 ${cloudUser.email} 的全部岗位、进展、双选会计划和 JD 截图吗？其他邮箱不受影响。`,
@@ -5625,6 +5660,7 @@ function bindEvents() {
 
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("close", () => {
+      resetGuestPermissionPrompt(dialog);
       if (dialog.id === "accountDialog" && ["cloud", "login"].includes(window.location.hash.slice(1))) {
         if (canBrowseWorkspace()) {
           cloudReturnRoute = "";

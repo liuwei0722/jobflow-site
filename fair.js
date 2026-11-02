@@ -133,20 +133,22 @@
   }
 
   async function requestApi(path, options = {}) {
-    if (isGuest) {
-      if (path.startsWith("/api/fairs?")) return { fairs: mockData.fairs };
-      if (path === "/api/fair-sources") return { sources: [] };
-      if (path.startsWith("/api/fairs/")) {
-        return { fair: mockData.fairs.find((fair) => fair.id === decodeURIComponent(path.split("/").pop())) };
-      }
-      throw new Error("请登录后使用完整功能");
+    const method = String(options.method || "GET").toUpperCase();
+    const publicRead = method === "GET" && (
+      /^\/api\/fairs(?:\?[^#]*|\/[^/?#]+)?$/.test(path) || path === "/api/fair-sources"
+    );
+    if (!publicRead && !hasWorkspaceAccess()) {
+      if (method !== "GET") checkGuestPermission();
+      throw new Error("请登录后使用个人双选会计划");
     }
-    if (!hasWorkspaceAccess()) throw new Error("请等待工作区加载完成");
     const base = apiBase();
     if (!base) throw new Error("双选会采集服务尚未配置");
     const sessionVersion = cloudSessionVersion;
-    const headers = { ...(await authHeaders()), ...(options.headers || {}) };
-    if (sessionVersion !== cloudSessionVersion || !hasWorkspaceAccess()) throw new Error("登录状态已变更");
+    const headers = {
+      ...(publicRead ? { "Content-Type": "application/json" } : await authHeaders()),
+      ...(options.headers || {}),
+    };
+    if (!publicRead && (sessionVersion !== cloudSessionVersion || !hasWorkspaceAccess())) throw new Error("登录状态已变更");
     const response = await fetch(`${base}${path}`, {
       ...options,
       headers,
@@ -166,7 +168,6 @@
   }
 
   async function loadFairs(force = false) {
-    if (!canBrowseWorkspace()) return;
     const sessionVersion = cloudSessionVersion;
     const { from, to } = getRange();
     const key = `${from}:${to}`;
@@ -197,6 +198,7 @@
   }
 
   async function loadFairPlans() {
+    if (isGuest || !hasWorkspaceAccess()) return;
     const userId = cloudUser?.id || "";
     if (!userId || fairUi.loadedUserId === userId || fairUi.plansLoading) return;
     fairUi.plansLoading = true;
@@ -619,10 +621,6 @@
   }
 
   function renderSourceSummary() {
-    if (isGuest) {
-      document.getElementById("fairSourceSummary").textContent = "示例活动";
-      return;
-    }
     const element = document.getElementById("fairSourceSummary");
     if (!fairUi.sources.length) {
       element.textContent = fairUi.loading ? "正在读取来源状态…" : "来源状态暂不可用";
@@ -726,10 +724,7 @@
   }
 
   function ensureSignedIn() {
-    if (hasWorkspaceAccess()) return true;
-    showToast("请先登录，再保存个人双选会计划");
-    document.getElementById("accountButton").click();
-    return false;
+    return checkGuestPermission();
   }
 
   function normalizedLocalPlan(fair, overrides = {}) {
@@ -758,7 +753,7 @@
   }
 
   async function persistPlan(fair, overrides) {
-    if (!ensureSignedIn()) return;
+    if (!checkGuestPermission()) return false;
     const userId = cloudUser?.id || "";
     const previous = planFor(fair.id);
     const next = normalizedLocalPlan(fair, overrides);
@@ -788,11 +783,13 @@
         saveState();
         await loadFairPlansAfterConflict();
         showToast("计划已在其他设备更新，请重新操作");
+        return false;
       } else {
         console.warn("Fair plan API sync unavailable.", error.message);
         showToast("计划已保存到当前账户，采集 API 暂未同步");
       }
     }
+    return true;
   }
 
   async function loadFairPlansAfterConflict() {
@@ -802,7 +799,7 @@
   }
 
   function openPlanDialog(fair, initialState) {
-    if (!ensureSignedIn()) return;
+    if (!fair) return;
     const plan = normalizedLocalPlan(
       fair,
       !planFor(fair.id) && initialState ? { state: initialState } : {},
@@ -844,7 +841,7 @@
       <section class="fair-detail-section">
         <dl class="fair-detail-grid">
           <dt>时间</dt><dd>${escapeHtml(fairTime(fair))}</dd>
-          <dt>完整地址</dt><dd>${escapeHtml(fair.place || "待核实")} ${!isGuest && fair.mode === "offline" && fair.place ? `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">地图搜索</a>` : ""}</dd>
+          <dt>完整地址</dt><dd>${escapeHtml(fair.place || "待核实")} ${fair.mode === "offline" && fair.place ? `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">地图搜索</a>` : ""}</dd>
           <dt>主办 / 承办</dt><dd>${escapeHtml([fair.organizer, fair.undertaker].filter(Boolean).join(" / ") || "待公布")}</dd>
           <dt>发布学校</dt><dd>${escapeHtml(fair.publisher || "待核实")}</dd>
           <dt>入场条件</dt><dd>${escapeHtml(fair.eligibility || "待核实")}</dd>
@@ -869,7 +866,7 @@
       <section class="fair-detail-section">
         <h3>来源与变更</h3>
         <p class="fair-description">${observations.length ? observations.map((item) => `${item.sourceId || item.name} · ${formatCheckedAt(item.checkedAt)}`).join("\n") : "来源待核实"}${changes.length ? `\n变更记录：${changes.map((item) => `v${item.revision} ${item.fields.join("、")}`).join("；")}` : ""}</p>
-        ${!isGuest && fair.url ? `<p><a href="${escapeHtml(fair.url)}" target="_blank" rel="noopener noreferrer">查看官方原文</a></p>` : ""}
+        ${fair.url ? `<p><a href="${escapeHtml(fair.url)}" target="_blank" rel="noopener noreferrer">查看官方原文</a></p>` : ""}
         ${fair.sources?.length > 1 ? `<p class="fair-description">同场活动的其他发布来源：${fair.sources.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name || source.id)}</a>`).join(" · ")}</p>` : ""}
       </section>
     `;
@@ -1120,6 +1117,7 @@
   };
 
   window.clearFairPlans = async function () {
+    if (!checkGuestPermission()) return false;
     const plans = currentPlans();
     const revisions = Object.fromEntries(
       Object.entries(plans).map(([fairId, entry]) => [fairId, Number(entry?.revision || 0)]),
@@ -1229,8 +1227,9 @@
     document.getElementById("fairCompareOpenButton").addEventListener("click", renderComparison);
     document.getElementById("fairSourceButton").addEventListener("click", renderSourcesDialog);
     document.getElementById("fairExportIcsButton").addEventListener("click", exportFairIcs);
-    document.getElementById("fairPlanForm").addEventListener("submit", (event) => {
+    document.getElementById("fairPlanForm").addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (!checkGuestPermission()) return;
       const fair = fairFor(document.getElementById("fairPlanId").value);
       if (!fair) return;
       const dateValue = document.getElementById("fairPlanDate").value;
@@ -1239,7 +1238,7 @@
         showToast("结束日期不能早于开始日期");
         return;
       }
-      persistPlan(fair, {
+      const saved = await persistPlan(fair, {
         state: document.getElementById("fairPlanState").value,
         registered: document.getElementById("fairPlanRegistered").checked,
         date: dateValue,
@@ -1251,7 +1250,7 @@
         acceptedRevision: Number(fair.revision || 0),
         seenRevision: Number(fair.revision || 0),
       });
-      closeDialog("fairPlanDialog");
+      if (saved) closeDialog("fairPlanDialog");
     });
   }
 

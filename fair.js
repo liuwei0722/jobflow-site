@@ -133,11 +133,23 @@
   }
 
   async function requestApi(path, options = {}) {
+    if (isGuest) {
+      if (path.startsWith("/api/fairs?")) return { fairs: mockData.fairs };
+      if (path === "/api/fair-sources") return { sources: [] };
+      if (path.startsWith("/api/fairs/")) {
+        return { fair: mockData.fairs.find((fair) => fair.id === decodeURIComponent(path.split("/").pop())) };
+      }
+      throw new Error("请登录后使用完整功能");
+    }
+    if (!hasWorkspaceAccess()) throw new Error("请等待工作区加载完成");
     const base = apiBase();
     if (!base) throw new Error("双选会采集服务尚未配置");
+    const sessionVersion = cloudSessionVersion;
+    const headers = { ...(await authHeaders()), ...(options.headers || {}) };
+    if (sessionVersion !== cloudSessionVersion || !hasWorkspaceAccess()) throw new Error("登录状态已变更");
     const response = await fetch(`${base}${path}`, {
       ...options,
-      headers: { ...(await authHeaders()), ...(options.headers || {}) },
+      headers,
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -154,6 +166,8 @@
   }
 
   async function loadFairs(force = false) {
+    if (!canBrowseWorkspace()) return;
+    const sessionVersion = cloudSessionVersion;
     const { from, to } = getRange();
     const key = `${from}:${to}`;
     if (!force && fairUi.loadedKey === key && fairUi.fairs.length) return;
@@ -165,16 +179,20 @@
         requestApi(`/api/fairs?from=${from}&to=${to}`),
         requestApi("/api/fair-sources"),
       ]);
+      if (sessionVersion !== cloudSessionVersion) return;
       fairUi.fairs = Array.isArray(fairResult.fairs) ? fairResult.fairs : [];
       fairUi.sources = Array.isArray(sourceResult.sources) ? sourceResult.sources : [];
       fairUi.loadedKey = key;
       refreshFairFilterOptions();
       await loadFairPlans();
     } catch (error) {
+      if (sessionVersion !== cloudSessionVersion) return;
       fairUi.error = error.message || "双选会数据暂时无法读取";
     } finally {
-      fairUi.loading = false;
-      renderFairs();
+      if (sessionVersion === cloudSessionVersion) {
+        fairUi.loading = false;
+        renderFairs();
+      }
     }
   }
 
@@ -601,6 +619,10 @@
   }
 
   function renderSourceSummary() {
+    if (isGuest) {
+      document.getElementById("fairSourceSummary").textContent = "示例活动";
+      return;
+    }
     const element = document.getElementById("fairSourceSummary");
     if (!fairUi.sources.length) {
       element.textContent = fairUi.loading ? "正在读取来源状态…" : "来源状态暂不可用";
@@ -619,11 +641,15 @@
   }
 
   function renderFairs() {
-    if (!hasWorkspaceAccess()) {
+    if (!canBrowseWorkspace()) {
       document.getElementById("fairCompareBar").hidden = true;
       return;
     }
     if (!document.getElementById("fairList")) return;
+    if (!fairUi.loadedKey && !fairUi.loading) {
+      loadFairs();
+      return;
+    }
     if (cloudUser?.id && fairUi.loadedUserId !== cloudUser.id && !fairUi.plansLoading) {
       window.setTimeout(loadFairPlans, 0);
     }
@@ -673,6 +699,18 @@
     refreshIcons();
   }
   window.renderFairs = renderFairs;
+  window.resetFairSession = () => {
+    fairUi.fairs = [];
+    fairUi.sources = [];
+    fairUi.loadedKey = "";
+    fairUi.loadedUserId = "";
+    fairUi.loading = false;
+    fairUi.plansLoading = false;
+    fairUi.error = "";
+    fairUi.compareIds.clear();
+    fairUi.detailCache.clear();
+    document.getElementById("fairCompareBar").hidden = true;
+  };
 
   function refreshFairFilterOptions() {
     const schools = [...new Set(fairUi.fairs.map((fair) => fair.school).filter(Boolean))].sort();
@@ -720,6 +758,7 @@
   }
 
   async function persistPlan(fair, overrides) {
+    if (!ensureSignedIn()) return;
     const userId = cloudUser?.id || "";
     const previous = planFor(fair.id);
     const next = normalizedLocalPlan(fair, overrides);
@@ -782,12 +821,15 @@
   }
 
   async function openFairDetail(fairId) {
+    const sessionVersion = cloudSessionVersion;
     let fair = fairFor(fairId);
     try {
       const result = await requestApi(`/api/fairs/${encodeURIComponent(fairId)}`);
+      if (sessionVersion !== cloudSessionVersion) return;
       fair = result.fair;
       fairUi.detailCache.set(fairId, fair);
     } catch (error) {
+      if (sessionVersion !== cloudSessionVersion) return;
       if (!fair) {
         showToast(error.message || "详情读取失败");
         return;
@@ -802,7 +844,7 @@
       <section class="fair-detail-section">
         <dl class="fair-detail-grid">
           <dt>时间</dt><dd>${escapeHtml(fairTime(fair))}</dd>
-          <dt>完整地址</dt><dd>${escapeHtml(fair.place || "待核实")} ${fair.mode === "offline" && fair.place ? `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">地图搜索</a>` : ""}</dd>
+          <dt>完整地址</dt><dd>${escapeHtml(fair.place || "待核实")} ${!isGuest && fair.mode === "offline" && fair.place ? `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">地图搜索</a>` : ""}</dd>
           <dt>主办 / 承办</dt><dd>${escapeHtml([fair.organizer, fair.undertaker].filter(Boolean).join(" / ") || "待公布")}</dd>
           <dt>发布学校</dt><dd>${escapeHtml(fair.publisher || "待核实")}</dd>
           <dt>入场条件</dt><dd>${escapeHtml(fair.eligibility || "待核实")}</dd>
@@ -827,7 +869,7 @@
       <section class="fair-detail-section">
         <h3>来源与变更</h3>
         <p class="fair-description">${observations.length ? observations.map((item) => `${item.sourceId || item.name} · ${formatCheckedAt(item.checkedAt)}`).join("\n") : "来源待核实"}${changes.length ? `\n变更记录：${changes.map((item) => `v${item.revision} ${item.fields.join("、")}`).join("；")}` : ""}</p>
-        <p><a href="${escapeHtml(fair.url)}" target="_blank" rel="noopener noreferrer">查看官方原文</a></p>
+        ${!isGuest && fair.url ? `<p><a href="${escapeHtml(fair.url)}" target="_blank" rel="noopener noreferrer">查看官方原文</a></p>` : ""}
         ${fair.sources?.length > 1 ? `<p class="fair-description">同场活动的其他发布来源：${fair.sources.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name || source.id)}</a>`).join(" · ")}</p>` : ""}
       </section>
     `;
@@ -848,6 +890,7 @@
   }
 
   async function renderComparison() {
+    const sessionVersion = cloudSessionVersion;
     let selected = [...fairUi.compareIds].map(fairFor).filter(Boolean);
     if (selected.length < 2) return;
     await Promise.all(
@@ -855,12 +898,14 @@
         if (Array.isArray(fair.companies)) return;
         try {
           const result = await requestApi(`/api/fairs/${encodeURIComponent(fair.id)}`);
+          if (sessionVersion !== cloudSessionVersion) return;
           fairUi.detailCache.set(fair.id, result.fair);
         } catch (error) {
           console.warn("Fair detail unavailable for comparison.", error.message);
         }
       }),
     );
+    if (sessionVersion !== cloudSessionVersion) return;
     selected = [...fairUi.compareIds].map(fairFor).filter(Boolean);
     const search = document.getElementById("fairSearchInput").value.trim();
     const companySets = selected.map(

@@ -6,7 +6,7 @@
     <meta name="description" content="OfferFlow 秋招投递记录、面试提醒与复盘管理工具">
     <title>OfferFlow · 秋招进度管理</title>
     <link rel="preconnect" href="https://unpkg.com">
-    <link rel="stylesheet" href="./styles.css?v=24">
+    <link rel="stylesheet" href="./styles.css?v=25">
     <link rel="stylesheet" href="./fair.css?v=2">
   </head>
   <body>
@@ -99,6 +99,10 @@
       </header>
 
       <main class="main-area is-dashboard" id="mainArea">
+        <aside class="guest-banner" id="guestBanner" aria-label="演示模式" hidden>
+          <span>演示模式，展示数据为示例，登录后使用完整功能</span>
+          <button class="button ghost" type="button" id="guestLoginButton">去登录</button>
+        </aside>
         <div class="page-context">
           <p class="eyebrow" id="pageEyebrow">2027 秋招</p>
           <h1 id="pageTitle">总览</h1>
@@ -1006,7 +1010,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4/dist/tus.min.js"></script>
     <script src="./supabase-config.js"></script>
-    <script src="./app.js?v=29"></script>
-    <script src="./fair.js?v=5"></script>
+    <script src="./app.js?v=30"></script>
+    <script src="./fair.js?v=6"></script>
   </body>
 </html>

@@ -310,6 +310,7 @@ let notificationWorkerPromise = null;
 let notificationCheckInFlight = false;
 let supabaseClient = null;
 let cloudUser = null;
+let isGuest = true;
 let cloudSyncReady = false;
 let cloudSyncTimer = null;
 let cloudMutationVersion = 0;
@@ -711,12 +712,29 @@ function loadState(storageKey = STORAGE_KEY, fallback = null) {
   } catch (error) {
     console.warn("Local data could not be read.", error);
   }
-  const initial = fallback ? migrateState(fallback) : buildDemoState();
+  const initial = fallback ? migrateState(fallback) : buildEmptyState();
   localStorage.setItem(storageKey, JSON.stringify(initial));
   return initial;
 }
 
-let state = loadState();
+// Guest examples stay in memory and never become a local migration source.
+const mockData = buildDemoState();
+mockData.applications[0].progress.push(createProgress(
+  "second", today(), "示例：准备业务分析案例", new Date().toISOString(), "demo",
+  { scheduledAt: `${dateOffset(1)}T14:00`, endedAt: `${dateOffset(1)}T15:00` },
+));
+syncApplicationFromProgress(mockData.applications[0]);
+mockData.fairs = [{
+  id: "guest-fair", title: "示例高校秋季双选会", mode: "offline", date: today(),
+  startTime: "14:00", endTime: "17:00", school: "示例大学", place: "示例大学体育馆",
+  district: "海淀区", scopeLevel: "高校级", eligibility: "示例：高校毕业生可参加",
+  companiesStatus: "unpublished", companies: [], description: "此活动仅用于演示。",
+}];
+let state = buildGuestState();
+
+function buildGuestState() {
+  return migrateState(JSON.parse(JSON.stringify(mockData)));
+}
 
 function cloudStateStorageKey(userId = cloudUser?.id) {
   return userId ? `${STORAGE_KEY}:cloud:${userId}` : STORAGE_KEY;
@@ -727,6 +745,7 @@ function cloudPendingStorageKey(userId = cloudUser?.id) {
 }
 
 function saveState() {
+  if (isGuest) return;
   state.version = 6;
   if (cloudUser?.email) state.account = { email: cloudUser.email };
   localStorage.setItem(cloudStateStorageKey(), JSON.stringify(state));
@@ -896,15 +915,20 @@ async function handleCloudSession(session, eventName = "") {
     const hadUser = Boolean(cloudUser);
     cloudSessionLoadingId = "";
     cloudUser = null;
+    isGuest = true;
     cloudSyncReady = false;
     window.clearTimeout(cloudSyncTimer);
-    if (hadUser) closeWorkspaceDialogs();
-    setCloudStatus(supabaseClient ? "signed-out" : "local");
     if (hadUser) {
-      state = loadState();
-      renderAll();
-    } else {
-      renderAccount();
+      closeWorkspaceDialogs();
+      document.getElementById("accountEmailInput").value = "";
+    }
+    setCloudStatus(supabaseClient ? "signed-out" : "local");
+    state = buildGuestState();
+    window.resetFairSession?.();
+    renderAll();
+    if (hadUser) {
+      closeDialog("accountDialog");
+      window.history.replaceState(null, "", `#${cloudReturnRoute || currentView}`);
     }
     resolveCloudRoute();
     return;
@@ -925,7 +949,9 @@ async function handleCloudSession(session, eventName = "") {
   if (cloudUser) {
     closeWorkspaceDialogs();
     cloudUser = null;
-    state = loadState();
+    isGuest = true;
+    state = buildGuestState();
+    window.resetFairSession?.();
     renderAll();
   }
   setCloudStatus("loading", "正在验证登录状态");
@@ -949,6 +975,8 @@ async function handleCloudSession(session, eventName = "") {
   const previousState = loadState();
   closeWorkspaceDialogs();
   cloudUser = user;
+  isGuest = false;
+  window.resetFairSession?.();
   cloudSessionLoadingId = user.id;
   await loadCloudStateForUser(user, previousState, sessionVersion);
   if (sessionVersion !== cloudSessionVersion) return;
@@ -977,14 +1005,26 @@ function closeWorkspaceDialogs() {
 }
 
 function hasWorkspaceAccess() {
-  return cloudAuthReady && Boolean(cloudUser) && cloudSyncReady;
+  return !isGuest && cloudAuthReady && Boolean(cloudUser) && cloudSyncReady;
+}
+
+function canBrowseWorkspace() {
+  return isGuest || hasWorkspaceAccess();
+}
+
+function requireWorkspaceAccess() {
+  if (hasWorkspaceAccess()) return true;
+  cloudReturnRoute = currentView;
+  navigateRoute("login");
+  return false;
 }
 
 function renderAuthGate() {
-  const authorized = hasWorkspaceAccess();
+  const authorized = canBrowseWorkspace();
   document.querySelector(".app-shell").hidden = !authorized;
   document.querySelector(".mobile-nav").hidden = !authorized;
   document.getElementById("authGate").hidden = authorized;
+  document.getElementById("guestBanner").hidden = !isGuest;
   if (!authorized) document.getElementById("fairCompareBar").hidden = true;
   document.getElementById("authGateMessage").textContent =
     !cloudAuthReady || cloudStatus === "loading"
@@ -997,6 +1037,16 @@ function renderAuthGate() {
 function resolveCloudRoute() {
   const route = window.location.hash.slice(1);
   renderAuthGate();
+  if (isGuest) {
+    if (route === "login" || route === "cloud") {
+      if (!cloudReturnRoute) cloudReturnRoute = currentView;
+      renderAccount();
+      openDialog("accountDialog");
+    } else {
+      switchView(VIEW_META[route] ? route : "dashboard");
+    }
+    return;
+  }
   if (!cloudAuthReady) {
     if (VIEW_META[route] || route === "cloud") cloudReturnRoute = route;
     return;
@@ -1150,7 +1200,7 @@ async function signOutCloudAccount() {
   }
   clearCloudOtpState();
   await handleCloudSession(null, "SIGNED_OUT");
-  showToast("已退出登录，请登录后访问工作区");
+  showToast("已退出登录，正在展示示例数据");
 }
 
 async function clearCurrentCloudWorkspace() {
@@ -1707,7 +1757,7 @@ function updateOcrProgress(message) {
 }
 
 async function recognizeQuickCaptureImage(file) {
-  if (!hasWorkspaceAccess()) return;
+  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   if (quickOcrBusy || quickAiBusy) {
     showToast("当前内容仍在识别中");
@@ -1769,8 +1819,8 @@ async function recognizeQuickCaptureImage(file) {
 }
 
 function openDialog(id) {
-  if (id !== "accountDialog" && !hasWorkspaceAccess()) {
-    navigateRoute(currentView);
+  const guestReadable = ["fairDetailDialog", "fairCompareDialog", "fairSourceDialog"];
+  if (id !== "accountDialog" && !(isGuest && guestReadable.includes(id)) && !requireWorkspaceAccess()) {
     return;
   }
   const dialog = document.getElementById(id);
@@ -1783,6 +1833,7 @@ function closeDialog(id) {
 }
 
 function confirmAction(title, message, onAccept) {
+  if (!requireWorkspaceAccess()) return;
   document.getElementById("confirmTitle").textContent = title;
   document.getElementById("confirmMessage").textContent = message;
   document.getElementById("confirmPopover").hidden = false;
@@ -1798,7 +1849,7 @@ function closeConfirm() {
 function renderAccount() {
   const configured = getCloudConfig().configured && Boolean(window.supabase?.createClient);
   const email = cloudUser?.email || "";
-  const name = email ? email.split("@")[0] : "本地访客";
+  const name = email ? email.split("@")[0] : "演示访客";
   const avatar = email ? name.slice(0, 1).toUpperCase() : "访";
   const statusLabels = {
     loading: "正在读取云端",
@@ -1834,9 +1885,7 @@ function renderAccount() {
     ? cloudStatus === "error"
       ? "云同步异常"
       : statusLabels[cloudStatus] || "云端账户"
-    : configured
-      ? "登录后云端同步"
-      : "数据保存在此设备";
+    : "示例数据 · 去登录";
   document.getElementById("accountAvatar").textContent = avatar;
 
   emailField.hidden = Boolean(email);
@@ -1894,7 +1943,7 @@ function renderAccount() {
 
 function switchView(view, options = {}) {
   if (!VIEW_META[view]) return;
-  if (!hasWorkspaceAccess()) {
+  if (!canBrowseWorkspace()) {
     navigateRoute(view);
     return;
   }
@@ -2408,6 +2457,7 @@ function renderNotificationToggle() {
 }
 
 async function toggleInterviewNotifications() {
+  if (!requireWorkspaceAccess()) return;
   const environment = getNotificationEnvironment();
   if (!environment.available) {
     showToast(environment.message);
@@ -3155,6 +3205,7 @@ function renderInterviewReviewEditor() {
 }
 
 function openInterviewReviewDialog(applicationId, progressId) {
+  if (!requireWorkspaceAccess()) return;
   const application = state.applications.find((item) => item.id === applicationId);
   const progress = application?.progress.find((item) => item.id === progressId);
   if (!application || !progress || !INTERVIEW_STAGES.has(progress.stage)) {
@@ -3729,7 +3780,7 @@ function saveInterviewReview() {
 
 function renderAll() {
   renderAuthGate();
-  if (!hasWorkspaceAccess()) {
+  if (!canBrowseWorkspace()) {
     renderAccount();
     return;
   }
@@ -4307,7 +4358,7 @@ async function parseQuickCaptureWithAi(text, options = {}) {
 }
 
 async function openCapturePreview(text, options = {}) {
-  if (!hasWorkspaceAccess()) return;
+  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const localDraft = parseQuickCapture(text);
   let parsedDraft = localDraft;
@@ -4420,7 +4471,7 @@ function applyCaptureTarget() {
 }
 
 async function saveCapture() {
-  if (!hasWorkspaceAccess()) return;
+  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const targetId = document.getElementById("captureTargetInput").value;
   const values = {
@@ -4535,7 +4586,7 @@ async function saveCapture() {
 }
 
 async function openApplication(id = "") {
-  if (!hasWorkspaceAccess()) return;
+  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const item = id ? state.applications.find((application) => application.id === id) : null;
   editingApplicationId = item ? item.id : "";
@@ -4699,7 +4750,7 @@ function fileToCompressedImage(file) {
 }
 
 async function addJdFiles(files, context = "application") {
-  if (!hasWorkspaceAccess()) return;
+  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const isCapture = context === "capture";
   const images = isCapture ? capturePendingJdImages : pendingJdImages;
@@ -4745,7 +4796,7 @@ async function addJdFiles(files, context = "application") {
 }
 
 async function saveApplicationFromForm() {
-  if (!hasWorkspaceAccess()) return;
+  if (!requireWorkspaceAccess()) return;
   const sessionVersion = cloudSessionVersion;
   const id = document.getElementById("applicationId").value;
   const existing = id
@@ -4812,6 +4863,7 @@ async function saveApplicationFromForm() {
 }
 
 function openProgressDialog(progressId = "") {
+  if (!requireWorkspaceAccess()) return;
   const application = state.applications.find((item) => item.id === editingApplicationId);
   if (!application) {
     showToast("请先保存岗位档案");
@@ -4846,6 +4898,7 @@ function openProgressDialog(progressId = "") {
 }
 
 function saveProgressFromForm() {
+  if (!requireWorkspaceAccess()) return;
   const application = state.applications.find((item) => item.id === editingApplicationId);
   if (!application) return;
   const id = document.getElementById("progressIdInput").value;
@@ -4914,6 +4967,10 @@ function deleteCurrentProgress() {
 }
 
 function updateApplicationStatus(id, status) {
+  if (!requireWorkspaceAccess()) {
+    renderApplications();
+    return;
+  }
   const application = state.applications.find((item) => item.id === id);
   if (!application || application.status === status) return;
   const now = new Date().toISOString();
@@ -4950,6 +5007,7 @@ function deleteCurrentApplication() {
 }
 
 function addCompanyToApplications(companyName) {
+  if (!requireWorkspaceAccess()) return;
   const company = COMPANIES.find((item) => item.name === companyName);
   if (!company || state.applications.some((item) => item.company === company.name)) return;
   const now = new Date().toISOString();
@@ -4997,6 +5055,7 @@ function downloadBlob(blob, filename) {
 }
 
 function exportCsv() {
+  if (!requireWorkspaceAccess()) return;
   if (!state.applications.length) {
     showToast("当前没有可导出的投递记录");
     return;
@@ -5065,6 +5124,7 @@ function exportCsv() {
 }
 
 function exportJson() {
+  if (!requireWorkspaceAccess()) return;
   downloadBlob(
     new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }),
     `求职进度备份_${today()}.json`,
@@ -5073,6 +5133,7 @@ function exportJson() {
 }
 
 function mergeImportedState(imported) {
+  if (!requireWorkspaceAccess()) return;
   if (!imported || !Array.isArray(imported.applications)) {
     throw new Error("文件中没有有效的投递数据");
   }
@@ -5275,6 +5336,7 @@ function bindEvents() {
 
   document.getElementById("quickCaptureForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!requireWorkspaceAccess()) return;
     if (quickOcrBusy || quickAiBusy) return;
     const text = document.getElementById("quickCaptureInput").value.trim();
     if (!text) {
@@ -5286,6 +5348,7 @@ function bindEvents() {
   const quickCapture = document.querySelector(".quick-capture");
   const quickImageInput = document.getElementById("quickImageInput");
   document.getElementById("quickImageButton").addEventListener("click", () => {
+    if (!requireWorkspaceAccess()) return;
     if (!quickOcrBusy && !quickAiBusy) quickImageInput.click();
   });
   document.getElementById("quickImageRemoveButton").addEventListener(
@@ -5459,6 +5522,7 @@ function bindEvents() {
     navigateRoute(cloudUser ? "cloud" : "login");
   };
   document.getElementById("authGateLoginButton").addEventListener("click", openAccount);
+  document.getElementById("guestLoginButton").addEventListener("click", openAccount);
   document.getElementById("authGateThemeButton").addEventListener("click", toggleTheme);
   document.getElementById("accountButton").addEventListener("click", openAccount);
   document.getElementById("accountForm").addEventListener("submit", async (event) => {
@@ -5562,7 +5626,7 @@ function bindEvents() {
   document.querySelectorAll("dialog").forEach((dialog) => {
     dialog.addEventListener("close", () => {
       if (dialog.id === "accountDialog" && ["cloud", "login"].includes(window.location.hash.slice(1))) {
-        if (hasWorkspaceAccess()) {
+        if (canBrowseWorkspace()) {
           cloudReturnRoute = "";
           window.history.replaceState(null, "", `#${currentView}`);
         }

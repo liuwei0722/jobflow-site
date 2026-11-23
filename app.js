@@ -14,6 +14,8 @@ const CLOUD_OTP_RESEND_DELAY = 60;
 const CLOUD_AI_TIMEOUT = 28000;
 const CLOUD_INTERVIEW_AI_TIMEOUT = 48000;
 const INTERVIEW_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
+const INTERVIEW_UPLOAD_MAX_BYTES = 45 * 1024 * 1024;
+const INTERVIEW_AUDIO_PART_SECONDS = 20 * 60;
 const INTERVIEW_ASR_POLL_INTERVAL = 4000;
 const INTERVIEW_ASR_TIMEOUT = 30 * 60 * 1000;
 
@@ -3381,7 +3383,12 @@ function encodeWav(audioBuffer) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-async function convertInterviewMediaToWav(file) {
+async function* prepareInterviewMedia(file) {
+  const format = interviewMediaFormat(file);
+  if (format && file.size <= INTERVIEW_UPLOAD_MAX_BYTES) {
+    yield { file, format, offsetMs: 0, index: 0, total: 1 };
+    return;
+  }
   setInterviewTranscriptionStatus("正在提取音轨并转换格式", 3);
   const AudioContextClass = window.AudioContext || window["webkitAudioContext"];
   if (!AudioContextClass || !window.OfflineAudioContext) {
@@ -3396,29 +3403,32 @@ async function convertInterviewMediaToWav(file) {
   } finally {
     await audioContext.close().catch(() => {});
   }
-  const frameCount = Math.ceil(decoded.duration * 16000);
-  const offlineContext = new OfflineAudioContext(1, frameCount, 16000);
-  const source = offlineContext.createBufferSource();
-  source.buffer = decoded;
-  source.connect(offlineContext.destination);
-  source.start();
-  const rendered = await offlineContext.startRendering();
-  const wav = encodeWav(rendered);
-  if (wav.size > INTERVIEW_MEDIA_MAX_BYTES) {
-    throw new Error("转换后的音频超过 200MB，请压缩或拆分后重试");
-  }
   const baseName = file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "interview";
-  return new File([wav], `${baseName}.wav`, { type: "audio/wav" });
+  if (!Number.isFinite(decoded.duration) || decoded.duration <= 0) {
+    throw new Error("音视频中没有可读取的音轨");
+  }
+  const total = Math.ceil(decoded.duration / INTERVIEW_AUDIO_PART_SECONDS);
+  for (let index = 0; index < total; index += 1) {
+    const offset = index * INTERVIEW_AUDIO_PART_SECONDS;
+    const duration = Math.min(INTERVIEW_AUDIO_PART_SECONDS, decoded.duration - offset);
+    setInterviewTranscriptionStatus(`正在准备音频 ${index + 1}/${total}`, null);
+    const offlineContext = new window.OfflineAudioContext(1, Math.ceil(duration * 16000), 16000);
+    const source = offlineContext.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offlineContext.destination);
+    source.start(0, offset, duration);
+    const wav = encodeWav(await offlineContext.startRendering());
+    yield {
+      file: new File([wav], `${baseName}_${index + 1}.wav`, { type: "audio/wav" }),
+      format: "wav", offsetMs: offset * 1000, index, total,
+    };
+  }
 }
 
-async function prepareInterviewMedia(file) {
-  const format = interviewMediaFormat(file);
-  if (format) return { file, format };
-  const converted = await convertInterviewMediaToWav(file);
-  return { file: converted, format: "wav" };
-}
-
-function uploadInterviewMedia(file, path) {
+function uploadInterviewMedia(file, path, job = activeInterviewTranscription) {
+  if (file.size > INTERVIEW_UPLOAD_MAX_BYTES) {
+    return Promise.reject(new Error("音频片段过大，请改用较小的 MP3 文件"));
+  }
   if (!window.tus?.Upload) {
     return supabaseClient.storage
       .from(CLOUD_INTERVIEW_MEDIA_BUCKET)
@@ -3456,12 +3466,17 @@ function uploadInterviewMedia(file, path) {
         },
         onError: reject,
         onProgress: (uploaded, total) => {
+          if (job?.cancelled) return;
           const percent = total ? Math.round((uploaded / total) * 100) : 0;
           setInterviewTranscriptionStatus(`正在上传 ${percent}%`, percent);
         },
         onSuccess: resolve,
       });
-      activeInterviewTranscription.upload = upload;
+      if (job?.cancelled) {
+        reject(new Error("转写已取消"));
+        return;
+      }
+      if (job) job.upload = upload;
       upload.start();
     });
   });
@@ -3472,27 +3487,60 @@ async function invokeInterviewTranscription(body) {
     CLOUD_INTERVIEW_ASR_FUNCTION,
     { body },
   );
-  if (error) throw error;
+  if (error) {
+    const details = await error.context?.clone?.().json().catch(() => null);
+    throw new Error(interviewTranscriptionErrorMessage(details?.error || error.message));
+  }
   if (!data || typeof data !== "object") {
     throw new Error("转写服务返回内容无效");
   }
   if (data.error) {
-    const messages = {
-      asr_not_configured: "Seed-ASR 尚未配置",
-      asr_not_activated: "Seed-ASR 2.0 尚未开通，请先在火山控制台启用服务",
-      silent_audio: "音视频中没有检测到清晰人声",
-      media_not_found: "临时音频不存在，请重新上传",
-    };
-    throw new Error(messages[data.error] || "音视频转写失败");
+    throw new Error(interviewTranscriptionErrorMessage(data.error));
   }
   return data;
+}
+
+function interviewTranscriptionErrorMessage(value) {
+  const messages = {
+    unauthorized: "登录状态已失效，请重新登录后重试",
+    asr_not_configured: "转写服务尚未配置，请联系管理员",
+    asr_not_activated: "转写服务尚未开通或额度不可用，请联系管理员",
+    asr_unavailable: "暂时无法连接转写服务，请稍后重试",
+    asr_submit_failed: "转写任务提交失败，请稍后重试",
+    asr_query_failed: "转写处理失败，请重新上传或更换音频格式",
+    silent_audio: "音视频中没有检测到清晰人声",
+    media_not_found: "临时音频不存在，请重新上传",
+    media_cleanup_failed: "临时音频清理失败，请稍后重试",
+    empty_transcript: "未能识别出转写文本，请检查音频内容",
+  };
+  const message = String(value || "");
+  if (/413|maximum size exceeded|payload too large/i.test(message)) {
+    return "音频上传超过当前服务限制，请刷新页面后重试，或改用较小的 MP3 文件";
+  }
+  return messages[message] || message || "音视频转写失败";
+}
+
+function formatInterviewTranscriptPart(result, part) {
+  if (part.total === 1) return String(result.transcript || "");
+  const timestamp = (milliseconds) => {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${hours ? `${String(hours).padStart(2, "0")}:` : ""}${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+  const header = `【第 ${part.index + 1}/${part.total} 段 · ${timestamp(part.offsetMs)} 起 · 说话人编号仅在本段内有效】`;
+  if (!result.utterances?.length) return `${header}\n${result.transcript || ""}`;
+  return `${header}\n${result.utterances.map((utterance) => {
+    const speaker = utterance.speaker ? `${utterance.speaker}：` : "";
+    return `[${timestamp(part.offsetMs + (Number(utterance.startTime) || 0))}] ${speaker}${utterance.text || ""}`;
+  }).join("\n")}`;
 }
 
 async function cleanupInterviewTranscription(job = activeInterviewTranscription) {
   if (!job) return;
   job.cancelled = true;
   job.upload?.abort?.();
-  activeInterviewTranscription = null;
+  if (activeInterviewTranscription === job) activeInterviewTranscription = null;
   if (job.path && supabaseClient && cloudUser) {
     await invokeInterviewTranscription({
       action: "cancel",
@@ -3516,70 +3564,89 @@ async function transcribeSelectedInterviewMedia() {
   if (!applicationId || !progressId) return;
 
   const originalFile = selectedInterviewMedia;
+  const sessionVersion = cloudSessionVersion;
+  const draft = interviewReviewDraft;
+  const userId = cloudUser.id;
   const job = { path: "", taskId: "", upload: null, cancelled: false };
+  const isCurrent = () => !job.cancelled && sessionVersion === cloudSessionVersion &&
+    cloudUser?.id === userId && interviewReviewDraft === draft;
+  const transcripts = [];
+  let mediaDeleted = true;
   activeInterviewTranscription = job;
   setInterviewTranscriptionBusy(true);
   try {
-    const prepared = await prepareInterviewMedia(originalFile);
-    if (job.cancelled) return;
     const safeApplicationId = applicationId.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeProgressId = progressId.replace(/[^a-zA-Z0-9_-]/g, "");
-    const extension = prepared.format;
-    job.path =
-      `${cloudUser.id}/${safeApplicationId}_${safeProgressId}_${makeId()}.${extension}`;
-    setInterviewTranscriptionStatus("正在上传 0%", 0);
-    await uploadInterviewMedia(prepared.file, job.path);
-    if (job.cancelled) return;
-
-    setInterviewTranscriptionStatus("已上传，正在提交 Seed-ASR", 100);
-    const started = await invokeInterviewTranscription({
-      action: "start",
-      path: job.path,
-      format: prepared.format,
-    });
-    job.taskId = String(started.taskId || "");
-    if (!job.taskId) throw new Error("转写任务创建失败");
-
-    const deadline = Date.now() + INTERVIEW_ASR_TIMEOUT;
-    let result = null;
-    while (!job.cancelled && Date.now() < deadline) {
-      setInterviewTranscriptionStatus("Seed-ASR 正在识别并区分说话人", null);
-      await wait(INTERVIEW_ASR_POLL_INTERVAL);
-      if (job.cancelled) return;
-      const status = await invokeInterviewTranscription({
-        action: "status",
-        taskId: job.taskId,
-        path: job.path,
+    for await (const prepared of prepareInterviewMedia(originalFile)) {
+      if (!isCurrent()) return;
+      const partLabel = prepared.total > 1 ? `第 ${prepared.index + 1}/${prepared.total} 段 · ` : "";
+      job.path = `${userId}/${safeApplicationId}_${safeProgressId}_${makeId()}.${prepared.format}`;
+      setInterviewTranscriptionStatus(`${partLabel}正在上传`, 0);
+      await uploadInterviewMedia(prepared.file, job.path, job);
+      if (!isCurrent()) return;
+      setInterviewTranscriptionStatus(`${partLabel}已上传，正在提交转写`, 100);
+      const started = await invokeInterviewTranscription({
+        action: "start", path: job.path, format: prepared.format,
       });
-      if (status.status === "completed") {
-        result = status;
-        break;
+      if (!isCurrent()) return;
+      job.taskId = String(started.taskId || "");
+      if (!job.taskId) throw new Error("转写任务创建失败");
+      const deadline = Date.now() + INTERVIEW_ASR_TIMEOUT;
+      let result = null;
+      while (isCurrent() && Date.now() < deadline) {
+        setInterviewTranscriptionStatus(`${partLabel}正在识别并区分说话人`, null);
+        await wait(INTERVIEW_ASR_POLL_INTERVAL);
+        if (!isCurrent()) return;
+        const status = await invokeInterviewTranscription({
+          action: "status", taskId: job.taskId, path: job.path,
+        });
+        if (!isCurrent()) return;
+        if (status.status === "completed") {
+          result = status;
+          break;
+        }
       }
+      if (!result) throw new Error("转写等待超时，请稍后重新上传");
+      if (result.mediaDeleted === false) {
+        const { error } = await supabaseClient.storage
+          .from(CLOUD_INTERVIEW_MEDIA_BUCKET).remove([job.path]);
+        if (error) mediaDeleted = false;
+      }
+      if (!isCurrent()) return;
+      job.path = "";
+      transcripts.push(formatInterviewTranscriptPart(result, prepared));
+      draft.transcript = transcripts.join("\n\n");
+      draft.sourceFileName = originalFile.name;
+      draft.sourceMimeType = originalFile.type;
+      document.getElementById("interviewTranscriptInput").value = draft.transcript;
     }
-    if (!result) throw new Error("转写等待超时，请稍后重新上传");
-    document.getElementById("interviewTranscriptInput").value =
-      String(result.transcript || "");
-    interviewReviewDraft.transcript = String(result.transcript || "");
-    interviewReviewDraft.sourceFileName = originalFile.name;
-    interviewReviewDraft.sourceMimeType = originalFile.type;
+    if (!isCurrent()) return;
     selectedInterviewMedia = null;
-    activeInterviewTranscription = null;
     document.getElementById("interviewMediaInput").value = "";
     document.getElementById("interviewMediaStatus").textContent =
-      `${originalFile.name} · 转写完成，原文件已删除`;
+      `${originalFile.name} · 转写完成${transcripts.length > 1 ? `，共 ${transcripts.length} 段` : ""}`;
     setInterviewTranscriptionStatus("转写完成，正在整理问题", null);
     await analyzeInterviewTranscript();
-    setInterviewTranscriptionStatus("原始音视频已从临时存储删除", null);
+    if (isCurrent()) {
+      setInterviewTranscriptionStatus(mediaDeleted
+        ? "转写完成，原始音视频已从临时存储删除"
+        : "转写完成，部分临时音频清理失败，请稍后重试", null);
+    }
   } catch (error) {
+    const shouldReport = isCurrent();
     console.warn("Interview transcription failed.", error?.message || error);
     await cleanupInterviewTranscription(job);
-    setInterviewTranscriptionStatus("", null);
-    showToast(error?.message || "音视频转写失败");
-  } finally {
-    if (activeInterviewTranscription === job) {
-      activeInterviewTranscription = null;
+    if (shouldReport && sessionVersion === cloudSessionVersion && interviewReviewDraft === draft) {
+      const message = interviewTranscriptionErrorMessage(error?.message);
+      const retained = transcripts.length ? `；已保留 ${transcripts.length} 段转写，可先整理或保存` : "";
+      setInterviewTranscriptionStatus(`${message}${retained}`, null);
+      showToast(message);
     }
-    setInterviewTranscriptionBusy(false);
+  } finally {
+    if (activeInterviewTranscription === job) activeInterviewTranscription = null;
+    if (sessionVersion === cloudSessionVersion && interviewReviewDraft === draft) {
+      setInterviewTranscriptionBusy(false);
+    }
   }
 }
 
